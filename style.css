@@ -35,7 +35,7 @@ body {
   background: var(--bg-grad), var(--bg);
   background-attachment: fixed;
   color: var(--text);
-  padding-bottom: 88px;
+  padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.01em;
 }
@@ -209,7 +209,7 @@ nav.bottom-nav .icon { width: 21px; height: 21px; }
 
 .fab {
   position: fixed;
-  bottom: 88px;
+  bottom: calc(88px + env(safe-area-inset-bottom, 0px));
   right: 20px;
   width: 58px;
   height: 58px;

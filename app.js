@@ -543,7 +543,12 @@ function renderTxnList(txns, listId, emptyId) {
 }
 
 /* ---------- Navigation ---------- */
+let activeTabView = 'home';
+let previousTabView = 'home';
+
 function switchView(view) {
+  if (view !== activeTabView && activeTabView !== 'settings') previousTabView = activeTabView;
+  activeTabView = view;
   document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
   document.getElementById('view-' + view).classList.add('active');
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
@@ -558,6 +563,38 @@ document.querySelectorAll('.nav-btn').forEach((b) => b.addEventListener('click',
 
 /* ---------- Hamburger menu (single tap straight to Settings) ---------- */
 document.getElementById('hamburger-btn').addEventListener('click', () => switchView('settings'));
+
+/* ---------- Swipe navigation: left = next tab, right = open Settings ---------- */
+const SWIPE_NAV_ORDER = ['home', 'accounts', 'bills', 'audit', 'export'];
+let swipeStartX = 0, swipeStartY = 0, swipeStartTime = 0;
+
+document.addEventListener('touchstart', (e) => {
+  const t = e.touches[0];
+  swipeStartX = t.clientX;
+  swipeStartY = t.clientY;
+  swipeStartTime = Date.now();
+}, { passive: true });
+
+document.addEventListener('touchend', (e) => {
+  if (document.querySelector('.modal-overlay.active')) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - swipeStartX;
+  const dy = t.clientY - swipeStartY;
+  const dt = Date.now() - swipeStartTime;
+  if (dt > 600) return;
+  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+
+  if (dx < 0) {
+    if (activeTabView === 'settings') {
+      switchView(previousTabView);
+    } else {
+      const idx = SWIPE_NAV_ORDER.indexOf(activeTabView);
+      if (idx >= 0 && idx < SWIPE_NAV_ORDER.length - 1) switchView(SWIPE_NAV_ORDER[idx + 1]);
+    }
+  } else {
+    if (activeTabView !== 'settings') switchView('settings');
+  }
+}, { passive: true });
 
 document.querySelectorAll('.period-tabs button').forEach((b) => {
   b.addEventListener('click', () => {
