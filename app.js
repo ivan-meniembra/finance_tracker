@@ -546,11 +546,13 @@ function renderTxnList(txns, listId, emptyId) {
 let activeTabView = 'home';
 let previousTabView = 'home';
 
-function switchView(view) {
+function switchView(view, direction) {
   if (view !== activeTabView && activeTabView !== 'settings') previousTabView = activeTabView;
   activeTabView = view;
-  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
-  document.getElementById('view-' + view).classList.add('active');
+  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active', 'anim-fade', 'anim-left', 'anim-right'));
+  const el = document.getElementById('view-' + view);
+  el.classList.add('active');
+  el.classList.add(direction === 'left' ? 'anim-left' : direction === 'right' ? 'anim-right' : 'anim-fade');
   document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   if (view === 'home') renderHome();
   if (view === 'audit') renderAudit();
@@ -564,7 +566,7 @@ document.querySelectorAll('.nav-btn').forEach((b) => b.addEventListener('click',
 /* ---------- Hamburger menu (single tap straight to Settings) ---------- */
 document.getElementById('hamburger-btn').addEventListener('click', () => switchView('settings'));
 
-/* ---------- Swipe navigation: left = next tab, right = open Settings ---------- */
+/* ---------- Swipe navigation: left = next tab, right = previous tab (Settings only from Home) ---------- */
 const SWIPE_NAV_ORDER = ['home', 'accounts', 'bills', 'audit', 'export'];
 let swipeStartX = 0, swipeStartY = 0, swipeStartTime = 0;
 
@@ -585,14 +587,21 @@ document.addEventListener('touchend', (e) => {
   if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
 
   if (dx < 0) {
+    // swiped left -> move forward (or back out of Settings)
     if (activeTabView === 'settings') {
-      switchView(previousTabView);
+      switchView(previousTabView, 'right');
     } else {
       const idx = SWIPE_NAV_ORDER.indexOf(activeTabView);
-      if (idx >= 0 && idx < SWIPE_NAV_ORDER.length - 1) switchView(SWIPE_NAV_ORDER[idx + 1]);
+      if (idx >= 0 && idx < SWIPE_NAV_ORDER.length - 1) switchView(SWIPE_NAV_ORDER[idx + 1], 'right');
     }
   } else {
-    if (activeTabView !== 'settings') switchView('settings');
+    // swiped right -> move to the previous tab, or open Settings only from Home
+    if (activeTabView === 'home') {
+      switchView('settings', 'left');
+    } else if (activeTabView !== 'settings') {
+      const idx = SWIPE_NAV_ORDER.indexOf(activeTabView);
+      if (idx > 0) switchView(SWIPE_NAV_ORDER[idx - 1], 'left');
+    }
   }
 }, { passive: true });
 
