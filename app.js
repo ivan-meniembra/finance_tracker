@@ -2039,7 +2039,7 @@ document.getElementById('btn-ai-insight').addEventListener('click', async () => 
   box.textContent = 'Thinking…';
 
   try {
-    const model = 'gemini-2.0-flash';
+    const model = 'gemini-3.6-flash';
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(state.geminiKey)}`,
       {
