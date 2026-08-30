@@ -18,7 +18,7 @@ const DEFAULT_DATA = {
   ],
   bills: [], // {id, name, amount, dueDate: 'YYYY-MM-DD', recurring: 'none'|'weekly'|'monthly'|'yearly', status: 'pending'|'paid', note, createdAt}
   billNames: ['Electricity', 'Water', 'Internet', 'Rent', 'Credit Card'],
-  openaiKey: '',
+  geminiKey: '',
   budgets: { overall: null, categories: {} }, // monthly budgets; categories: {catName: number}
 };
 
@@ -46,7 +46,7 @@ function loadData() {
       accounts,
       bills: parsed.bills || [],
       billNames: parsed.billNames || DEFAULT_DATA.billNames,
-      openaiKey: parsed.openaiKey || '',
+      geminiKey: parsed.geminiKey || parsed.openaiKey || '',
       budgets: parsed.budgets || { overall: null, categories: {} },
     };
   } catch (e) {
@@ -75,6 +75,63 @@ function fmtMoney(n) {
   const sign = n < 0 ? '-' : '';
   return sign + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+/* ---------- Amount field: accepts plain numbers or simple math expressions (e.g. 50+30+20) ---------- */
+function evalAmount(raw) {
+  const str = (raw || '').trim();
+  if (!str) return NaN;
+  if (/^\d+(\.\d+)?$/.test(str)) return parseFloat(str);
+  if (!/^[0-9+\-*/(). ]+$/.test(str)) return NaN;
+  try {
+    const result = Function('"use strict"; return (' + str + ')')();
+    return typeof result === 'number' && isFinite(result) ? result : NaN;
+  } catch {
+    return NaN;
+  }
+}
+
+function initAmountCalculator(inputId, previewId) {
+  const input = document.getElementById(inputId);
+  const preview = document.getElementById(previewId);
+  input.addEventListener('input', () => {
+    const raw = input.value;
+    if (/[+\-*/]/.test(raw)) {
+      const result = evalAmount(raw);
+      preview.textContent = isFinite(result) ? `= ${fmtMoney(result)}` : '';
+    } else {
+      preview.textContent = '';
+    }
+  });
+}
+
+function wireCalcRow(rowId, inputId, previewId) {
+  document.querySelectorAll(`#${rowId} button[data-op]`).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const input = document.getElementById(inputId);
+      input.value += btn.dataset.op;
+      input.dispatchEvent(new Event('input'));
+      input.focus();
+    });
+  });
+  document.getElementById('calc-eval')?.addEventListener('click', () => {
+    const input = document.getElementById(inputId);
+    const result = evalAmount(input.value);
+    if (isFinite(result)) {
+      input.value = Math.round(result * 100) / 100;
+      document.getElementById(previewId).textContent = '';
+    }
+    input.focus();
+  });
+  document.getElementById('calc-clear')?.addEventListener('click', () => {
+    const input = document.getElementById(inputId);
+    input.value = '';
+    document.getElementById(previewId).textContent = '';
+    input.focus();
+  });
+}
+
+initAmountCalculator('txn-amount', 'txn-amount-preview');
+wireCalcRow('calc-row', 'txn-amount', 'txn-amount-preview');
 
 function toast(msg) {
   const t = document.getElementById('toast');
@@ -621,6 +678,89 @@ document.getElementById('period-next').addEventListener('click', () => {
   renderHome();
 });
 
+/* ---------- Period picker: quick jump to any month/year/date ---------- */
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+let pickerYear = currentAnchor.getFullYear();
+
+function openPeriodPicker() {
+  pickerYear = currentAnchor.getFullYear();
+  renderPeriodPicker();
+  document.getElementById('period-picker-overlay').classList.add('active');
+}
+
+function renderPeriodPicker() {
+  const content = document.getElementById('period-picker-content');
+  const title = document.getElementById('period-picker-title');
+
+  if (currentPeriodType === 'month') {
+    title.textContent = 'Jump to month';
+    const curYear = currentAnchor.getFullYear(), curMonth = currentAnchor.getMonth();
+    content.innerHTML = `
+      <div class="picker-year-nav">
+        <button id="picker-year-prev">‹</button>
+        <span class="picker-year-label">${pickerYear}</span>
+        <button id="picker-year-next">›</button>
+      </div>
+      <div class="picker-month-grid">
+        ${MONTH_NAMES.map((m, i) => `<button data-month="${i}" class="${pickerYear === curYear && i === curMonth ? 'current' : ''}">${m}</button>`).join('')}
+      </div>`;
+    document.getElementById('picker-year-prev').addEventListener('click', () => { pickerYear--; renderPeriodPicker(); });
+    document.getElementById('picker-year-next').addEventListener('click', () => { pickerYear++; renderPeriodPicker(); });
+    content.querySelectorAll('[data-month]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        currentAnchor = new Date(pickerYear, parseInt(btn.dataset.month, 10), 1);
+        document.getElementById('period-picker-overlay').classList.remove('active');
+        renderHome();
+      });
+    });
+  } else if (currentPeriodType === 'year') {
+    title.textContent = 'Jump to year';
+    const curYear = currentAnchor.getFullYear();
+    const startYear = pickerYear - 5;
+    const years = Array.from({ length: 12 }, (_, i) => startYear + i);
+    content.innerHTML = `
+      <div class="picker-year-nav">
+        <button id="picker-year-prev">‹</button>
+        <span class="picker-year-label">${startYear} – ${startYear + 11}</span>
+        <button id="picker-year-next">›</button>
+      </div>
+      <div class="picker-year-grid">
+        ${years.map((y) => `<button data-year="${y}" class="${y === curYear ? 'current' : ''}">${y}</button>`).join('')}
+      </div>`;
+    document.getElementById('picker-year-prev').addEventListener('click', () => { pickerYear -= 12; renderPeriodPicker(); });
+    document.getElementById('picker-year-next').addEventListener('click', () => { pickerYear += 12; renderPeriodPicker(); });
+    content.querySelectorAll('[data-year]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        currentAnchor = new Date(parseInt(btn.dataset.year, 10), 0, 1);
+        document.getElementById('period-picker-overlay').classList.remove('active');
+        renderHome();
+      });
+    });
+  } else {
+    title.textContent = currentPeriodType === 'week' ? 'Jump to week containing date' : 'Jump to date';
+    const iso = currentAnchor.toISOString().slice(0, 10);
+    content.innerHTML = `
+      <label>Date</label>
+      <input type="date" id="picker-date-input" value="${iso}">
+      <button class="btn btn-primary" id="picker-date-go" style="width:100%;margin-top:14px">Go</button>`;
+    document.getElementById('picker-date-go').addEventListener('click', () => {
+      const val = document.getElementById('picker-date-input').value;
+      if (!val) return;
+      currentAnchor = parseDate(val);
+      document.getElementById('period-picker-overlay').classList.remove('active');
+      renderHome();
+    });
+  }
+}
+
+document.getElementById('period-label').addEventListener('click', openPeriodPicker);
+document.getElementById('period-picker-cancel').addEventListener('click', () => {
+  document.getElementById('period-picker-overlay').classList.remove('active');
+});
+document.getElementById('period-picker-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'period-picker-overlay') document.getElementById('period-picker-overlay').classList.remove('active');
+});
+
 /* ---------- Transaction modal ---------- */
 let editingId = null;
 let modalType = 'expense';
@@ -665,7 +805,7 @@ function installmentMonths() {
 }
 
 function updateInstallmentPreview() {
-  const amount = parseFloat(document.getElementById('txn-amount').value) || 0;
+  const amount = evalAmount(document.getElementById('txn-amount').value) || 0;
   const months = installmentMonths();
   const interest = parseFloat(document.getElementById('installment-interest').value) || 0;
   const preview = document.getElementById('installment-preview');
@@ -702,6 +842,7 @@ function openTxnModal(id) {
     document.getElementById('txn-modal-title').textContent = 'Edit transaction';
     setModalType(t.type);
     document.getElementById('txn-amount').value = t.amount;
+    document.getElementById('txn-amount-preview').textContent = '';
     if (t.type === 'transfer') {
       document.getElementById('transfer-from').value = t.method;
       document.getElementById('transfer-to').value = t.toAccount;
@@ -717,6 +858,7 @@ function openTxnModal(id) {
     document.getElementById('txn-modal-title').textContent = 'Add transaction';
     setModalType('expense');
     document.getElementById('txn-amount').value = '';
+    document.getElementById('txn-amount-preview').textContent = '';
     document.getElementById('txn-date').value = todayStr();
     document.getElementById('txn-note').value = '';
     document.getElementById('txn-installment').checked = false;
@@ -743,7 +885,7 @@ document.getElementById('txn-modal-overlay').addEventListener('click', (e) => {
 });
 
 document.getElementById('txn-save').addEventListener('click', () => {
-  const amount = parseFloat(document.getElementById('txn-amount').value);
+  const amount = Math.round(evalAmount(document.getElementById('txn-amount').value) * 100) / 100;
   if (!amount || amount <= 0) { toast('Enter a valid amount'); return; }
   const date = document.getElementById('txn-date').value || todayStr();
   const note = document.getElementById('txn-note').value.trim();
@@ -857,7 +999,7 @@ function applyAuditFilters() {
 function renderSettings() {
   renderChipList('cat-expense-list', state.categories.expense, (val) => removeCategory('expense', val));
   renderChipList('cat-income-list', state.categories.income, (val) => removeCategory('income', val));
-  document.getElementById('openai-key').value = state.openaiKey || '';
+  document.getElementById('gemini-key').value = state.geminiKey || '';
   renderBudgetSettings();
   renderChipList('bill-name-list', state.billNames, removeBillName);
 }
@@ -940,7 +1082,7 @@ document.getElementById('add-cat-income').addEventListener('click', () => {
   }
 });
 document.getElementById('btn-save-key').addEventListener('click', () => {
-  state.openaiKey = document.getElementById('openai-key').value.trim();
+  state.geminiKey = document.getElementById('gemini-key').value.trim();
   saveData();
   toast('API key saved');
 });
@@ -1009,7 +1151,7 @@ document.getElementById('restore-file').addEventListener('change', (e) => {
           accounts: parsed.accounts || DEFAULT_DATA.accounts,
           bills: parsed.bills || [],
           billNames: parsed.billNames || DEFAULT_DATA.billNames,
-          openaiKey: parsed.openaiKey || '',
+          geminiKey: parsed.geminiKey || parsed.openaiKey || '',
           budgets: parsed.budgets || { overall: null, categories: {} },
         };
         saveData();
@@ -1159,6 +1301,46 @@ function normalizeDate(str) {
 }
 
 /* ---------- Accounts / net worth ---------- */
+function accrueInterestForAccount(acc) {
+  if (!acc.interestRate) return false;
+  const today = todayStr();
+  const last = acc.lastInterestDate || today;
+  if (last >= today) return false;
+  const days = Math.round((parseDate(today) - parseDate(last)) / 86400000);
+  if (days <= 0) { acc.lastInterestDate = today; return false; }
+
+  const principal = accountBalance(acc);
+  const dailyRate = acc.interestRate / 100 / 365;
+  const interestAmt = Math.round((principal * (Math.pow(1 + dailyRate, days) - 1)) * 100) / 100;
+  acc.lastInterestDate = today;
+  if (interestAmt === 0) return false;
+
+  const isLiability = acc.kind === 'liability';
+  const catList = isLiability ? state.categories.expense : state.categories.income;
+  if (!catList.includes('Interest')) catList.push('Interest');
+
+  state.transactions.push({
+    id: uid(),
+    type: isLiability ? 'expense' : 'income',
+    amount: Math.abs(interestAmt),
+    category: 'Interest',
+    method: acc.name,
+    date: today,
+    note: `Auto-accrued interest (${days} day${days > 1 ? 's' : ''} @ ${acc.interestRate}% APY)`,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  return true;
+}
+
+function accrueAllInterest() {
+  let changed = false;
+  for (const acc of state.accounts) {
+    if (accrueInterestForAccount(acc)) changed = true;
+  }
+  if (changed) saveData();
+}
+
 function accountBalance(account) {
   let bal = account.initialBalance || 0;
   const today = todayStr();
@@ -1185,17 +1367,19 @@ function renderAccounts() {
   const list = document.getElementById('account-list');
   const empty = document.getElementById('account-empty');
 
-  const rows = state.accounts.map((a) => {
-    const bal = accountBalance(a);
+  const withBalances = state.accounts.map((a) => ({ account: a, bal: accountBalance(a) }));
+  withBalances.sort((x, y) => y.bal - x.bal);
+
+  const rows = withBalances.map(({ account: a, bal }) => {
     if (a.kind === 'asset') assets += bal;
     else liabilities += bal;
-    const meta = a.kind === 'liability'
-      ? `Liability${a.creditLimit ? ` · Limit ${fmtMoney(a.creditLimit)} · Available ${fmtMoney(a.creditLimit - bal)}` : ''}`
-      : 'Asset';
+    const metaParts = [a.kind === 'liability' ? 'Liability' : 'Asset'];
+    if (a.kind === 'liability' && a.creditLimit) metaParts.push(`Limit ${fmtMoney(a.creditLimit)} · Available ${fmtMoney(a.creditLimit - bal)}`);
+    if (a.interestRate) metaParts.push(`${a.interestRate}% APY`);
     return `<li class="txn-item" data-name="${escapeHtml(a.name)}">
       <div class="txn-main">
         <div class="txn-cat">${escapeHtml(a.name)}</div>
-        <div class="txn-meta">${meta}</div>
+        <div class="txn-meta">${metaParts.join(' · ')}</div>
       </div>
       <div class="txn-amt ${a.kind === 'liability' ? 'expense' : 'income'}">${fmtMoney(bal)}</div>
     </li>`;
@@ -1224,6 +1408,7 @@ function openAccountModal(name) {
   const kindSel = document.getElementById('account-kind');
   const balInput = document.getElementById('account-balance');
   const limitInput = document.getElementById('account-limit');
+  const interestInput = document.getElementById('account-interest-rate');
 
   if (name) {
     const a = state.accounts.find((x) => x.name === name);
@@ -1232,6 +1417,7 @@ function openAccountModal(name) {
     kindSel.value = a.kind;
     balInput.value = a.initialBalance;
     limitInput.value = a.creditLimit || '';
+    interestInput.value = a.interestRate || '';
     delBtn.style.display = 'block';
   } else {
     document.getElementById('account-modal-title').textContent = 'Add account';
@@ -1239,6 +1425,7 @@ function openAccountModal(name) {
     kindSel.value = 'asset';
     balInput.value = '';
     limitInput.value = '';
+    interestInput.value = '';
     delBtn.style.display = 'none';
   }
   updateAccountKindUI();
@@ -1267,6 +1454,8 @@ document.getElementById('account-save').addEventListener('click', () => {
   const kind = document.getElementById('account-kind').value;
   const initialBalance = parseFloat(document.getElementById('account-balance').value) || 0;
   const creditLimit = kind === 'liability' ? (parseFloat(document.getElementById('account-limit').value) || 0) : undefined;
+  const interestRateRaw = document.getElementById('account-interest-rate').value;
+  const interestRate = interestRateRaw !== '' ? parseFloat(interestRateRaw) : undefined;
 
   if (editingAccountName) {
     const a = state.accounts.find((x) => x.name === editingAccountName);
@@ -1274,10 +1463,15 @@ document.getElementById('account-save').addEventListener('click', () => {
     if (name !== editingAccountName) {
       state.transactions.forEach((t) => { if (t.method === editingAccountName) t.method = name; });
     }
-    Object.assign(a, { name, kind, initialBalance, creditLimit });
+    const hadRate = !!a.interestRate;
+    Object.assign(a, { name, kind, initialBalance, creditLimit, interestRate });
+    if (interestRate && !hadRate) a.lastInterestDate = todayStr();
+    if (!interestRate) delete a.lastInterestDate;
   } else {
     if (state.accounts.some((x) => x.name === name)) { toast('An account with that name already exists'); return; }
-    state.accounts.push({ name, kind, initialBalance, creditLimit });
+    const newAccount = { name, kind, initialBalance, creditLimit, interestRate };
+    if (interestRate) newAccount.lastInterestDate = todayStr();
+    state.accounts.push(newAccount);
   }
   saveData();
   document.getElementById('account-modal-overlay').classList.remove('active');
@@ -1522,9 +1716,9 @@ document.getElementById('bill-mark-paid').addEventListener('click', (e) => {
 /* ---------- AI chart insights (optional, online-only) ---------- */
 document.getElementById('btn-ai-insight').addEventListener('click', async () => {
   const box = document.getElementById('ai-insight-box');
-  if (!state.openaiKey) {
+  if (!state.geminiKey) {
     box.style.display = 'block';
-    box.textContent = 'Add your OpenAI API key in Settings to enable this feature.';
+    box.textContent = 'Add your Gemini API key in Settings to enable this feature.';
     return;
   }
   if (!navigator.onLine) {
@@ -1551,27 +1745,27 @@ document.getElementById('btn-ai-insight').addEventListener('click', async () => 
   box.textContent = 'Thinking…';
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${state.openaiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: 'You are a concise personal finance assistant. Given aggregated spending totals for a period, give a 2-4 sentence plain-language insight: notable patterns, biggest category, and one practical suggestion. No markdown.' },
-          { role: 'user', content: JSON.stringify(summary) },
-        ],
-        max_tokens: 200,
-      }),
-    });
+    const model = 'gemini-2.0-flash';
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(state.geminiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: 'You are a concise personal finance assistant. Given aggregated spending totals for a period, give a 2-4 sentence plain-language insight: notable patterns, biggest category, and one practical suggestion. No markdown.' }],
+          },
+          contents: [{ parts: [{ text: JSON.stringify(summary) }] }],
+          generationConfig: { maxOutputTokens: 200 },
+        }),
+      }
+    );
     if (!res.ok) {
       const errText = await res.text();
       throw new Error(`API error ${res.status}: ${errText.slice(0, 200)}`);
     }
     const data = await res.json();
-    box.textContent = data.choices?.[0]?.message?.content?.trim() || 'No insight returned.';
+    box.textContent = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'No insight returned.';
   } catch (err) {
     box.textContent = 'Could not get an insight: ' + err.message;
   }
@@ -1604,4 +1798,5 @@ if ('serviceWorker' in navigator) {
 
 /* ---------- Init ---------- */
 document.getElementById('txn-date').value = todayStr();
+accrueAllInterest();
 renderHome();

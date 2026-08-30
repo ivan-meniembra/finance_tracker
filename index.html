@@ -36,7 +36,7 @@
     </div>
     <div class="period-nav">
       <button id="period-prev">‹</button>
-      <span class="period-label" id="period-label">-</span>
+      <button class="period-label" id="period-label">-</button>
       <button id="period-next">›</button>
     </div>
 
@@ -205,9 +205,9 @@
     </div>
     <div class="card">
       <h3 class="section-title" style="margin-top:0">AI chart insights (optional)</h3>
-      <p style="font-size:13px;color:var(--muted)">Uses your own OpenAI API key. Only aggregated category totals are sent — never individual transaction notes. Requires internet access; leave blank to disable.</p>
-      <label>OpenAI API key</label>
-      <input type="password" id="openai-key" placeholder="sk-...">
+      <p style="font-size:13px;color:var(--muted)">Uses your own free Gemini API key (get one at aistudio.google.com). Only aggregated category totals are sent — never individual transaction notes. Requires internet access; leave blank to disable.</p>
+      <label>Gemini API key</label>
+      <input type="password" id="gemini-key" placeholder="AIza...">
       <button class="btn btn-secondary" id="btn-save-key" style="width:100%;margin-top:10px">Save key</button>
     </div>
     <div class="card">
@@ -253,7 +253,16 @@
       <button type="button" id="type-transfer">Transfer</button>
     </div>
     <label>Amount</label>
-    <input type="number" id="txn-amount" inputmode="decimal" placeholder="0.00" step="0.01">
+    <input type="text" id="txn-amount" inputmode="decimal" placeholder="0.00" autocomplete="off">
+    <div class="calc-row" id="calc-row">
+      <button type="button" data-op="+">+</button>
+      <button type="button" data-op="-">−</button>
+      <button type="button" data-op="*">×</button>
+      <button type="button" data-op="/">÷</button>
+      <button type="button" id="calc-eval">=</button>
+      <button type="button" id="calc-clear">C</button>
+    </div>
+    <div class="calc-preview" id="txn-amount-preview"></div>
     <div id="category-wrap">
       <label>Category</label>
       <select id="txn-category"></select>
@@ -315,6 +324,17 @@
   </div>
 </div>
 
+<!-- PERIOD PICKER MODAL -->
+<div class="modal-overlay" id="period-picker-overlay">
+  <div class="modal">
+    <h2 id="period-picker-title">Jump to</h2>
+    <div id="period-picker-content"></div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="period-picker-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- ACCOUNT MODAL -->
 <div class="modal-overlay" id="account-modal-overlay">
   <div class="modal">
@@ -332,6 +352,9 @@
       <label>Credit limit</label>
       <input type="number" id="account-limit" inputmode="decimal" step="0.01" placeholder="0.00">
     </div>
+    <label>Annual interest rate (%, optional)</label>
+    <input type="number" id="account-interest-rate" inputmode="decimal" step="0.01" placeholder="e.g. 4.5">
+    <p style="font-size:12px;color:var(--muted)">If set, interest accrues automatically every day (compounded daily) and is logged as a transaction — no manual entry needed.</p>
     <div class="btn-row">
       <button class="btn btn-secondary" id="account-cancel">Cancel</button>
       <button class="btn btn-danger" id="account-delete" style="display:none">Delete</button>
