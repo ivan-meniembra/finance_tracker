@@ -1305,24 +1305,38 @@ function nextInterestCreditDate(dateStr, frequency) {
   const d = parseDate(dateStr);
   if (frequency === 'monthly') d.setMonth(d.getMonth() + 1);
   else if (frequency === 'annually') d.setFullYear(d.getFullYear() + 1);
-  else d.setDate(d.getDate() + 1); // daily
+  else d.setDate(d.getDate() + 1); // daily (also used as a no-op step for 'maturity', which is gated separately)
   return d.toISOString().slice(0, 10);
 }
 
-const INTEREST_FREQUENCY_LABEL = { daily: 'daily', monthly: 'monthly', annually: 'annual' };
+const INTEREST_FREQUENCY_LABEL = { daily: 'daily', monthly: 'monthly', annually: 'annual', maturity: 'at maturity' };
+
+function accountInterestMaturityDate(acc) {
+  if (!acc.interestTermMonths || !acc.interestStartDate) return null;
+  return addMonths(acc.interestStartDate, acc.interestTermMonths);
+}
 
 function accrueInterestForAccount(acc) {
-  if (!acc.interestRate) return false;
+  if (!acc.interestRate || acc.interestMatured) return false;
   const today = todayStr();
   const frequency = acc.interestFrequency || 'daily';
-  const last = acc.lastInterestDate || today;
+  const last = acc.lastInterestDate || acc.interestStartDate || today;
   if (last >= today) return false;
 
-  const nextCredit = nextInterestCreditDate(last, frequency);
-  if (nextCredit > today) return false; // not due yet per the chosen crediting schedule
+  const maturityDate = accountInterestMaturityDate(acc);
+  const isMaturityMode = frequency === 'maturity';
 
-  const days = Math.round((parseDate(today) - parseDate(last)) / 86400000);
-  if (days <= 0) { acc.lastInterestDate = today; return false; }
+  if (isMaturityMode) {
+    if (!maturityDate || today < maturityDate) return false; // term deposit hasn't matured yet — no interim postings
+  } else {
+    const nextCredit = nextInterestCreditDate(last, frequency);
+    if (nextCredit > today) return false; // not due yet per the chosen crediting schedule
+  }
+
+  // A fixed-term account never earns interest past its own maturity date, regardless of crediting frequency.
+  const effectiveEnd = maturityDate && maturityDate < today ? maturityDate : today;
+  const days = Math.round((parseDate(effectiveEnd) - parseDate(last)) / 86400000);
+  if (days <= 0) { acc.lastInterestDate = effectiveEnd; if (maturityDate && effectiveEnd >= maturityDate) acc.interestMatured = true; return false; }
 
   const principal = accountBalance(acc);
   const basis = acc.interestBasis || 365;
@@ -1332,7 +1346,8 @@ function accrueInterestForAccount(acc) {
     : principal * (Math.pow(1 + dailyRate, days) - 1);
   const taxRate = acc.interestTaxRate || 0;
   const netInterest = Math.round((grossInterest * (1 - taxRate / 100)) * 100) / 100;
-  acc.lastInterestDate = today;
+  acc.lastInterestDate = effectiveEnd;
+  if (maturityDate && effectiveEnd >= maturityDate) acc.interestMatured = true;
   if (netInterest === 0) return false;
 
   const isLiability = acc.kind === 'liability';
@@ -1341,14 +1356,15 @@ function accrueInterestForAccount(acc) {
 
   const compoundingLabel = acc.interestCompounding === 'simple' ? 'simple' : 'compound';
   const taxNote = taxRate ? `, after ${taxRate}% tax` : '';
+  const termNote = acc.interestTermMonths ? `, ${acc.interestTermMonths}mo term` : '';
   state.transactions.push({
     id: uid(),
     type: isLiability ? 'expense' : 'income',
     amount: Math.abs(netInterest),
     category: 'Interest',
     method: acc.name,
-    date: today,
-    note: `Auto-accrued interest (${days} day${days > 1 ? 's' : ''}, ${compoundingLabel}, credited ${INTEREST_FREQUENCY_LABEL[frequency]} @ ${acc.interestRate}% APY/${basis}${taxNote})`,
+    date: effectiveEnd,
+    note: `Auto-accrued interest (${days} day${days > 1 ? 's' : ''}, ${compoundingLabel}, credited ${INTEREST_FREQUENCY_LABEL[frequency]} @ ${acc.interestRate}% APY/${basis}${termNote}${taxNote})`,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
@@ -1398,7 +1414,13 @@ function renderAccounts() {
     else liabilities += bal;
     const metaParts = [];
     if (a.kind === 'liability' && a.creditLimit) metaParts.push(`Limit ${fmtMoney(a.creditLimit)} · Available ${fmtMoney(a.creditLimit - bal)}`);
-    if (a.interestRate) metaParts.push(`${a.interestRate}% APY (${a.interestFrequency || 'daily'})`);
+    if (a.interestRate) {
+      metaParts.push(`${a.interestRate}% APY (${a.interestFrequency || 'daily'})`);
+      const maturityDate = accountInterestMaturityDate(a);
+      if (maturityDate) {
+        metaParts.push(a.interestMatured ? 'Matured' : `Matures ${parseDate(maturityDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`);
+      }
+    }
     return `<li class="txn-item" data-name="${escapeHtml(a.name)}">
       <div class="txn-main">
         <div class="txn-cat">${escapeHtml(a.name)}</div>
@@ -1453,6 +1475,9 @@ function openAccountModal(name) {
     compoundingSel.value = a.interestCompounding || 'compound';
     basisSel.value = String(a.interestBasis || 365);
     taxInput.value = a.interestTaxRate || '';
+    document.getElementById('account-interest-term').value = a.interestTermMonths || '';
+    document.getElementById('account-interest-start').value = a.interestStartDate || todayStr();
+    document.getElementById('account-has-interest').checked = !!a.interestRate;
     delBtn.style.display = 'block';
   } else {
     document.getElementById('account-modal-title').textContent = 'Add account';
@@ -1465,11 +1490,54 @@ function openAccountModal(name) {
     compoundingSel.value = 'compound';
     basisSel.value = '365';
     taxInput.value = '';
+    document.getElementById('account-interest-term').value = '';
+    document.getElementById('account-interest-start').value = todayStr();
+    document.getElementById('account-has-interest').checked = false;
     delBtn.style.display = 'none';
   }
   updateAccountKindUI();
+  updateAccountInterestUI();
   document.getElementById('account-modal-overlay').classList.add('active');
 }
+
+function addMonths(dateStr, months) {
+  const d = parseDate(dateStr);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
+function updateAccountInterestUI() {
+  document.getElementById('account-interest-wrap').style.display =
+    document.getElementById('account-has-interest').checked ? 'block' : 'none';
+  updateAccountMaturityUI();
+}
+
+function updateAccountMaturityUI() {
+  const term = document.getElementById('account-interest-term').value;
+  const startInput = document.getElementById('account-interest-start');
+  const startWrap = document.getElementById('account-interest-start-wrap');
+  const preview = document.getElementById('account-maturity-preview');
+  const maturityOption = document.querySelector('#account-interest-frequency option[value="maturity"]');
+
+  startWrap.style.display = term ? 'block' : 'none';
+  maturityOption.disabled = !term;
+  if (!term && document.getElementById('account-interest-frequency').value === 'maturity') {
+    document.getElementById('account-interest-frequency').value = 'monthly';
+  }
+
+  if (term && startInput.value) {
+    const maturityDate = addMonths(startInput.value, parseInt(term, 10));
+    preview.style.display = 'block';
+    preview.textContent = `Matures on ${parseDate(maturityDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}. ${document.getElementById('account-interest-frequency').value === 'maturity' ? 'The full interest for the whole term will be credited as one lump sum on that date.' : 'Interest stops accruing once the term ends.'}`;
+  } else {
+    preview.style.display = 'none';
+  }
+}
+
+document.getElementById('account-has-interest').addEventListener('change', updateAccountInterestUI);
+document.getElementById('account-interest-term').addEventListener('change', updateAccountMaturityUI);
+document.getElementById('account-interest-start').addEventListener('change', updateAccountMaturityUI);
+document.getElementById('account-interest-frequency').addEventListener('change', updateAccountMaturityUI);
 
 function updateAccountKindUI() {
   const kind = document.getElementById('account-kind').value;
@@ -1493,13 +1561,21 @@ document.getElementById('account-save').addEventListener('click', () => {
   const kind = document.getElementById('account-kind').value;
   const initialBalance = parseFloat(document.getElementById('account-balance').value) || 0;
   const creditLimit = kind === 'liability' ? (parseFloat(document.getElementById('account-limit').value) || 0) : undefined;
+  const hasInterest = document.getElementById('account-has-interest').checked;
   const interestRateRaw = document.getElementById('account-interest-rate').value;
-  const interestRate = interestRateRaw !== '' ? parseFloat(interestRateRaw) : undefined;
+  const interestRate = hasInterest && interestRateRaw !== '' ? parseFloat(interestRateRaw) : undefined;
   const interestFrequency = document.getElementById('account-interest-frequency').value;
   const interestCompounding = document.getElementById('account-interest-compounding').value;
   const interestBasis = parseInt(document.getElementById('account-interest-basis').value, 10);
   const interestTaxRateRaw = document.getElementById('account-interest-tax').value;
-  const interestTaxRate = interestTaxRateRaw !== '' ? parseFloat(interestTaxRateRaw) : undefined;
+  const interestTaxRate = hasInterest && interestTaxRateRaw !== '' ? parseFloat(interestTaxRateRaw) : undefined;
+  const interestTermRaw = document.getElementById('account-interest-term').value;
+  const interestTermMonths = hasInterest && interestTermRaw !== '' ? parseInt(interestTermRaw, 10) : undefined;
+  const interestStartDate = hasInterest ? (document.getElementById('account-interest-start').value || todayStr()) : undefined;
+
+  if (hasInterest && interestFrequency === 'maturity' && !interestTermMonths) {
+    toast('Pick a term for "at maturity" crediting'); return;
+  }
 
   if (editingAccountName) {
     const a = state.accounts.find((x) => x.name === editingAccountName);
@@ -1508,13 +1584,14 @@ document.getElementById('account-save').addEventListener('click', () => {
       state.transactions.forEach((t) => { if (t.method === editingAccountName) t.method = name; });
     }
     const hadRate = !!a.interestRate;
-    Object.assign(a, { name, kind, initialBalance, creditLimit, interestRate, interestFrequency, interestCompounding, interestBasis, interestTaxRate });
-    if (interestRate && !hadRate) a.lastInterestDate = todayStr();
-    if (!interestRate) { delete a.lastInterestDate; delete a.interestFrequency; delete a.interestCompounding; delete a.interestBasis; delete a.interestTaxRate; }
+    const startChanged = interestStartDate && interestStartDate !== a.interestStartDate;
+    Object.assign(a, { name, kind, initialBalance, creditLimit, interestRate, interestFrequency, interestCompounding, interestBasis, interestTaxRate, interestTermMonths, interestStartDate });
+    if (interestRate && (!hadRate || startChanged)) { a.lastInterestDate = interestStartDate; a.interestMatured = false; }
+    if (!interestRate) { delete a.lastInterestDate; delete a.interestFrequency; delete a.interestCompounding; delete a.interestBasis; delete a.interestTaxRate; delete a.interestTermMonths; delete a.interestStartDate; delete a.interestMatured; }
   } else {
     if (state.accounts.some((x) => x.name === name)) { toast('An account with that name already exists'); return; }
-    const newAccount = { name, kind, initialBalance, creditLimit, interestRate, interestFrequency, interestCompounding, interestBasis, interestTaxRate };
-    if (interestRate) newAccount.lastInterestDate = todayStr();
+    const newAccount = { name, kind, initialBalance, creditLimit, interestRate, interestFrequency, interestCompounding, interestBasis, interestTaxRate, interestTermMonths, interestStartDate };
+    if (interestRate) newAccount.lastInterestDate = interestStartDate;
     state.accounts.push(newAccount);
   }
   saveData();
