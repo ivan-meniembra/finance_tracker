@@ -66,9 +66,18 @@ function uid() {
   return 'txn_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+// Formats a Date using its LOCAL y/m/d components — never use .toISOString() for this,
+// since that converts to UTC first and silently shifts the date by one day for anyone
+// outside UTC+0 (e.g. UTC+8 Philippines) around midnight.
+function toDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function todayStr() {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
+  return toDateStr(new Date());
 }
 
 function fmtMoney(n) {
@@ -208,7 +217,17 @@ function inRange(dateStr, start, end) {
 
 /* ---------- Rendering: Home view ---------- */
 const CHART_COLORS = ['#22d3ee', '#34d399', '#f87171', '#fbbf24', '#a78bfa', '#f472b6', '#60a5fa', '#4ade80', '#fb923c', '#c084fc'];
-let selectedCategoryFilter = null;
+// Unified filter driving the Home transaction list — set by clicking any chart.
+// { kind: 'category', value } | { kind: 'type', value: 'income'|'expense' } | { kind: 'date', start, end, label }
+let activeFilter = null;
+
+function setActiveFilter(next) {
+  const same = activeFilter && next && activeFilter.kind === next.kind
+    && activeFilter.value === next.value
+    && activeFilter.label === next.label;
+  activeFilter = same ? null : next;
+  renderHome();
+}
 
 function renderHome() {
   document.getElementById('period-label').textContent = periodLabel(currentPeriodType, currentAnchor);
@@ -232,18 +251,29 @@ function renderHome() {
   netEl.textContent = fmtMoney(net);
   netEl.className = 'value ' + (net >= 0 ? 'income' : 'expense');
 
-  if (selectedCategoryFilter && !byCat[selectedCategoryFilter]) selectedCategoryFilter = null;
+  if (activeFilter?.kind === 'category' && !byCat[activeFilter.value]) activeFilter = null;
 
   renderChart(byCat, expense);
   renderIncomeExpenseChart(income, expense);
   renderTrendChart();
   renderBudgetCard(byCat, expense);
 
-  const filteredTxns = selectedCategoryFilter
-    ? txns.filter((t) => t.type === 'expense' && t.category === selectedCategoryFilter)
-    : txns;
-  document.getElementById('txn-list-title').textContent = selectedCategoryFilter ? `Transactions — ${selectedCategoryFilter}` : 'Transactions';
-  document.getElementById('txn-filter-clear').style.display = selectedCategoryFilter ? 'block' : 'none';
+  let filteredTxns = txns;
+  let filterLabel = null;
+  if (activeFilter) {
+    if (activeFilter.kind === 'category') {
+      filteredTxns = txns.filter((t) => t.type === 'expense' && t.category === activeFilter.value);
+      filterLabel = activeFilter.value;
+    } else if (activeFilter.kind === 'type') {
+      filteredTxns = txns.filter((t) => t.type === activeFilter.value);
+      filterLabel = activeFilter.value === 'income' ? 'Income' : 'Expense';
+    } else if (activeFilter.kind === 'date') {
+      filteredTxns = txns.filter((t) => inRange(t.date, activeFilter.start, activeFilter.end));
+      filterLabel = activeFilter.label;
+    }
+  }
+  document.getElementById('txn-list-title').textContent = filterLabel ? `Transactions — ${filterLabel}` : 'Transactions';
+  document.getElementById('txn-filter-clear').style.display = filterLabel ? 'block' : 'none';
   renderTxnList(filteredTxns, 'txn-list', 'txn-empty');
 }
 
@@ -332,12 +362,18 @@ function svgEl(tag, attrs) {
 }
 
 function selectCategory(cat) {
-  selectedCategoryFilter = selectedCategoryFilter === cat ? null : cat;
-  renderHome();
+  setActiveFilter({ kind: 'category', value: cat });
+}
+
+function isCategorySelected(cat) {
+  return activeFilter?.kind === 'category' && activeFilter.value === cat;
+}
+function isCategoryFilterActive() {
+  return activeFilter?.kind === 'category';
 }
 
 document.getElementById('txn-filter-clear').addEventListener('click', () => {
-  selectedCategoryFilter = null;
+  activeFilter = null;
   renderHome();
 });
 
@@ -361,9 +397,9 @@ function renderChart(byCat, total) {
 
   entries.forEach(([cat, val], i) => {
     const li = document.createElement('div');
-    const isSelected = selectedCategoryFilter === cat;
+    const isSelected = isCategorySelected(cat);
     const pct = Math.round((val / total) * 100);
-    li.className = 'legend-item' + (isSelected ? ' selected' : '') + (selectedCategoryFilter && !isSelected ? ' dim' : '');
+    li.className = 'legend-item' + (isSelected ? ' selected' : '') + (isCategoryFilterActive() && !isSelected ? ' dim' : '');
     li.innerHTML = `<span class="legend-swatch" style="background:${CHART_COLORS[i % CHART_COLORS.length]}"></span>${escapeHtml(cat)} (${fmtMoney(val)} · ${pct}%)`;
     li.addEventListener('click', () => selectCategory(cat));
     legend.appendChild(li);
@@ -376,13 +412,13 @@ function renderBarChart(svg, entries, total) {
   const barW = 320 / entries.length;
   entries.forEach(([cat, val], i) => {
     const h = (val / maxVal) * 120;
-    const isSelected = selectedCategoryFilter === cat;
+    const isSelected = isCategorySelected(cat);
     const rect = svgEl('rect', {
       x: i * barW + barW * 0.15, y: 150 - h, width: barW * 0.7, height: h,
       rx: 3, fill: CHART_COLORS[i % CHART_COLORS.length],
     });
     rect.classList.add('chart-seg');
-    if (selectedCategoryFilter && !isSelected) rect.classList.add('dim');
+    if (isCategoryFilterActive() && !isSelected) rect.classList.add('dim');
     if (isSelected) rect.setAttribute('stroke', '#fff');
     if (isSelected) rect.setAttribute('stroke-width', '2');
     rect.addEventListener('click', () => selectCategory(cat));
@@ -394,7 +430,7 @@ function renderBarChart(svg, entries, total) {
       fill: 'var(--muted)', 'font-size': 10, 'font-weight': 700,
     });
     pctText.textContent = `${pct}%`;
-    if (selectedCategoryFilter && !isSelected) pctText.setAttribute('opacity', '0.4');
+    if (isCategoryFilterActive() && !isSelected) pctText.setAttribute('opacity', '0.4');
     svg.appendChild(pctText);
   });
 }
@@ -410,7 +446,7 @@ function renderDonutChart(svg, entries, total) {
   entries.forEach(([cat, val], i) => {
     const frac = val / total;
     const dash = frac * circumference;
-    const isSelected = selectedCategoryFilter === cat;
+    const isSelected = isCategorySelected(cat);
     const circle = svgEl('circle', {
       cx, cy, r, fill: 'none',
       stroke: CHART_COLORS[i % CHART_COLORS.length],
@@ -421,13 +457,13 @@ function renderDonutChart(svg, entries, total) {
       'stroke-linecap': entries.length > 1 ? 'butt' : 'round',
     });
     circle.classList.add('chart-seg');
-    if (selectedCategoryFilter && !isSelected) circle.classList.add('dim');
+    if (isCategoryFilterActive() && !isSelected) circle.classList.add('dim');
     circle.addEventListener('click', () => selectCategory(cat));
     svg.appendChild(circle);
     offset += dash;
   });
 
-  const selectedEntry = entries.find(([cat]) => cat === selectedCategoryFilter);
+  const selectedEntry = entries.find(([cat]) => isCategorySelected(cat));
   const valueText = svgEl('text', { x: cx, y: cy - 4, 'text-anchor': 'middle', class: 'donut-center-value' });
   valueText.textContent = fmtMoney(selectedEntry ? selectedEntry[1] : total);
   svg.appendChild(valueText);
@@ -443,8 +479,8 @@ function renderIncomeExpenseChart(income, expense) {
   const maxVal = Math.max(income, expense, 1);
   const barW = 90;
   const bars = [
-    { label: 'Income', val: income, x: 70, color: 'var(--income)' },
-    { label: 'Expense', val: expense, x: 190, color: 'var(--expense)' },
+    { label: 'Income', val: income, x: 70, color: 'var(--income)', type: 'income' },
+    { label: 'Expense', val: expense, x: 190, color: 'var(--expense)', type: 'expense' },
   ];
   if (income <= 0 && expense <= 0) {
     const t = svgEl('text', { x: 160, y: 80, 'text-anchor': 'middle', fill: '#94a3b8', 'font-size': 12 });
@@ -452,14 +488,30 @@ function renderIncomeExpenseChart(income, expense) {
     svg.appendChild(t);
     return;
   }
+  const typeFilterActive = activeFilter?.kind === 'type';
   bars.forEach((b) => {
     const h = (b.val / maxVal) * 100;
-    svg.appendChild(svgEl('rect', { x: b.x, y: 122 - h, width: barW, height: h, rx: 6, fill: b.color }));
+    const isSelected = activeFilter?.kind === 'type' && activeFilter.value === b.type;
+    // full-height invisible hit target so the whole column is tappable, not just the bar itself
+    const hitArea = svgEl('rect', { x: b.x - 8, y: 0, width: barW + 16, height: 150, fill: 'transparent' });
+    hitArea.classList.add('chart-seg');
+    hitArea.addEventListener('click', () => setActiveFilter({ kind: 'type', value: b.type }));
+    svg.appendChild(hitArea);
+
+    const rect = svgEl('rect', { x: b.x, y: 122 - h, width: barW, height: h, rx: 6, fill: b.color });
+    rect.classList.add('chart-seg');
+    if (typeFilterActive && !isSelected) rect.classList.add('dim');
+    if (isSelected) { rect.setAttribute('stroke', '#fff'); rect.setAttribute('stroke-width', '2'); }
+    rect.style.pointerEvents = 'none';
+    svg.appendChild(rect);
+
     const valText = svgEl('text', { x: b.x + barW / 2, y: 122 - h - 8, 'text-anchor': 'middle', fill: 'var(--text)', 'font-size': 13, 'font-weight': 700 });
     valText.textContent = fmtMoney(b.val);
+    valText.style.pointerEvents = 'none';
     svg.appendChild(valText);
     const labelText = svgEl('text', { x: b.x + barW / 2, y: 140, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 11, 'font-weight': 600 });
     labelText.textContent = b.label;
+    labelText.style.pointerEvents = 'none';
     svg.appendChild(labelText);
   });
 }
@@ -515,6 +567,7 @@ function renderTrendChart() {
   const padX = 8, padTop = 12, padBottom = 22, chartW = 320 - padX * 2, chartH = 140 - padTop - padBottom;
   const expensePoints = linePoints(buckets, 'expense', maxVal, padX, padTop, chartW, chartH);
   const incomePoints = linePoints(buckets, 'income', maxVal, padX, padTop, chartW, chartH);
+  const stepX = buckets.length > 1 ? chartW / (buckets.length - 1) : chartW;
 
   const defs = svgEl('defs', {});
   defs.innerHTML = `<linearGradient id="trendFillExpense" x1="0" y1="0" x2="0" y2="1">
@@ -522,6 +575,20 @@ function renderTrendChart() {
     <stop offset="100%" stop-color="#fb7185" stop-opacity="0"/>
   </linearGradient>`;
   svg.appendChild(defs);
+
+  // Clickable per-bucket columns (drawn first, underneath the lines) so tapping anywhere
+  // in a day/month's column filters the transaction list to that bucket.
+  buckets.forEach((b, i) => {
+    const cx = padX + i * stepX;
+    const isSelected = activeFilter?.kind === 'date' && activeFilter.label === b.label
+      && activeFilter.start.getTime() === b.start.getTime();
+    const col = svgEl('rect', {
+      x: cx - stepX / 2, y: 0, width: stepX, height: 140, fill: isSelected ? 'rgba(255,255,255,0.06)' : 'transparent',
+    });
+    col.classList.add('chart-seg');
+    col.addEventListener('click', () => setActiveFilter({ kind: 'date', start: b.start, end: b.end, label: b.label }));
+    svg.appendChild(col);
+  });
 
   const drawLine = (points, color, fillGradient) => {
     const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
@@ -738,7 +805,7 @@ function renderPeriodPicker() {
     });
   } else {
     title.textContent = currentPeriodType === 'week' ? 'Jump to week containing date' : 'Jump to date';
-    const iso = currentAnchor.toISOString().slice(0, 10);
+    const iso = toDateStr(currentAnchor);
     content.innerHTML = `
       <label>Date</label>
       <input type="date" id="picker-date-input" value="${iso}">
@@ -932,7 +999,7 @@ document.getElementById('txn-save').addEventListener('click', () => {
       const thisAmount = isLast ? Math.round((total - roundedSoFar) * 100) / 100 : perMonth;
       state.transactions.push({
         id: uid(), type: 'expense', amount: thisAmount, category, method,
-        date: d.toISOString().slice(0, 10),
+        date: toDateStr(d),
         note: `${note ? note + ' ' : ''}(installment ${i + 1}/${months})`.trim(),
         installmentId, installmentIndex: i + 1, installmentTotal: months,
         createdAt: now, updatedAt: now,
@@ -988,6 +1055,19 @@ function applyAuditFilters() {
   });
 
   document.getElementById('audit-count').textContent = results.length;
+
+  let income = 0, expense = 0;
+  for (const t of results) {
+    if (t.type === 'income') income += t.amount;
+    else if (t.type === 'expense') expense += t.amount;
+  }
+  document.getElementById('audit-sum-income').textContent = fmtMoney(income);
+  document.getElementById('audit-sum-expense').textContent = fmtMoney(expense);
+  const net = income - expense;
+  const netEl = document.getElementById('audit-sum-net');
+  netEl.textContent = fmtMoney(net);
+  netEl.className = 'value ' + (net >= 0 ? 'income' : 'expense');
+
   renderTxnList(results, 'audit-list', 'audit-empty');
 }
 
@@ -1296,7 +1376,7 @@ function normalizeDate(str) {
     return `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
   const d = new Date(str);
-  if (!isNaN(d)) return d.toISOString().slice(0, 10);
+  if (!isNaN(d)) return toDateStr(d);
   return null;
 }
 
@@ -1306,7 +1386,7 @@ function nextInterestCreditDate(dateStr, frequency) {
   if (frequency === 'monthly') d.setMonth(d.getMonth() + 1);
   else if (frequency === 'annually') d.setFullYear(d.getFullYear() + 1);
   else d.setDate(d.getDate() + 1); // daily (also used as a no-op step for 'maturity', which is gated separately)
-  return d.toISOString().slice(0, 10);
+  return toDateStr(d);
 }
 
 const INTEREST_FREQUENCY_LABEL = { daily: 'daily', monthly: 'monthly', annually: 'annual', maturity: 'at maturity' };
@@ -1379,11 +1459,11 @@ function accrueAllInterest() {
   if (changed) saveData();
 }
 
-function accountBalance(account) {
+function accountBalance(account, asOf) {
   let bal = account.initialBalance || 0;
-  const today = todayStr();
+  const cutoff = asOf || todayStr();
   for (const t of state.transactions) {
-    if (t.date > today) continue; // future-dated transactions (e.g. upcoming installments) don't count toward the CURRENT balance yet
+    if (t.date > cutoff) continue; // future-dated transactions (e.g. upcoming installments) don't count toward the balance as of this date
     if (t.type === 'transfer') {
       const isLiability = account.kind === 'liability';
       if (t.method === account.name) bal += isLiability ? t.amount : -t.amount; // money leaving this account
@@ -1400,10 +1480,59 @@ function accountBalance(account) {
   return bal;
 }
 
+function renderDebtTrendChart() {
+  const card = document.getElementById('debt-trend-card');
+  const svg = document.getElementById('debt-trend-svg');
+  const liabilityAccounts = state.accounts.filter((a) => a.kind === 'liability');
+  if (!liabilityAccounts.length) { card.style.display = 'none'; return; }
+
+  // Trailing 6 months, each point = total liability balance as of that month's end.
+  const today = parseDate(todayStr());
+  const points6 = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    const asOf = toDateStr(monthEnd > today ? today : monthEnd);
+    const total = liabilityAccounts.reduce((s, a) => s + accountBalance(a, asOf), 0);
+    points6.push({ label: d.toLocaleDateString(undefined, { month: 'short' }), total });
+  }
+
+  card.style.display = 'block';
+  svg.innerHTML = '';
+  svg.setAttribute('viewBox', '0 0 320 140');
+  const maxVal = Math.max(...points6.map((p) => p.total), 1);
+  const padX = 8, padTop = 16, padBottom = 22, chartW = 320 - padX * 2, chartH = 140 - padTop - padBottom;
+  const stepX = points6.length > 1 ? chartW / (points6.length - 1) : chartW;
+  const pts = points6.map((p, i) => ({ x: padX + i * stepX, y: padTop + chartH - (p.total / maxVal) * chartH, p }));
+
+  const defs = svgEl('defs', {});
+  defs.innerHTML = `<linearGradient id="debtFill" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#fb7185" stop-opacity="0.25"/>
+    <stop offset="100%" stop-color="#fb7185" stop-opacity="0"/>
+  </linearGradient>`;
+  svg.appendChild(defs);
+
+  const linePath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+  const areaPath = `${linePath} L ${pts[pts.length - 1].x} ${padTop + chartH} L ${pts[0].x} ${padTop + chartH} Z`;
+  svg.appendChild(svgEl('path', { d: areaPath, fill: 'url(#debtFill)', stroke: 'none' }));
+  svg.appendChild(svgEl('path', { d: linePath, fill: 'none', stroke: 'var(--expense)', 'stroke-width': 2.2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+
+  pts.forEach((pt, i) => {
+    svg.appendChild(svgEl('circle', { cx: pt.x, cy: pt.y, r: 2.6, fill: 'var(--expense)' }));
+    const valText = svgEl('text', { x: pt.x, y: pt.y - 8, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 8.5, 'font-weight': 600 });
+    valText.textContent = fmtMoney(pt.p.total);
+    svg.appendChild(valText);
+    const labelText = svgEl('text', { x: pt.x, y: 136, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 9 });
+    labelText.textContent = pt.p.label;
+    svg.appendChild(labelText);
+  });
+}
+
 function renderAccounts() {
   let assets = 0, liabilities = 0;
   const list = document.getElementById('account-list');
   const empty = document.getElementById('account-empty');
+  renderDebtTrendChart();
 
   const withBalances = state.accounts.map((a) => ({ account: a, bal: accountBalance(a) }));
   const assetRows = withBalances.filter((x) => x.account.kind === 'asset').sort((x, y) => y.bal - x.bal);
@@ -1503,7 +1632,7 @@ function openAccountModal(name) {
 function addMonths(dateStr, months) {
   const d = parseDate(dateStr);
   d.setMonth(d.getMonth() + months);
-  return d.toISOString().slice(0, 10);
+  return toDateStr(d);
 }
 
 function updateAccountInterestUI() {
@@ -1617,14 +1746,14 @@ function nextDueDate(dateStr, recurring) {
   if (recurring === 'weekly') d.setDate(d.getDate() + 7);
   else if (recurring === 'monthly') d.setMonth(d.getMonth() + 1);
   else if (recurring === 'yearly') d.setFullYear(d.getFullYear() + 1);
-  return d.toISOString().slice(0, 10);
+  return toDateStr(d);
 }
 
 let currentBillTab = 'due';
 
 function billBucket(b, today) {
   if (b.status === 'paid') return 'paid';
-  const dueSoonCutoff = shiftAnchor('day', parseDate(today), 7).toISOString().slice(0, 10);
+  const dueSoonCutoff = toDateStr(shiftAnchor('day', parseDate(today), 7));
   if (b.dueDate <= dueSoonCutoff) return 'due'; // overdue + due within 7 days
   return 'pending';
 }
@@ -1663,7 +1792,7 @@ function renderBills() {
 
   list.innerHTML = sorted.map((b) => {
     const overdue = b.status === 'pending' && b.dueDate < today;
-    const dueSoon = b.status === 'pending' && !overdue && b.dueDate <= shiftAnchor('day', parseDate(today), 7).toISOString().slice(0, 10);
+    const dueSoon = b.status === 'pending' && !overdue && b.dueDate <= toDateStr(shiftAnchor('day', parseDate(today), 7));
     const statusColor = b.status === 'paid' ? 'var(--income)' : overdue ? 'var(--expense)' : dueSoon ? '#fbbf24' : 'var(--muted)';
     const statusLabel = b.status === 'paid' ? 'Paid' : overdue ? 'Overdue' : dueSoon ? 'Due soon' : 'Pending';
     return `<li class="txn-item" data-id="${b.id}">
@@ -1711,6 +1840,12 @@ function populateBillAccountSelect() {
   const sel = document.getElementById('bill-pay-account');
   sel.innerHTML = state.accounts.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
 }
+function populateBillLinkedAccountSelect() {
+  const sel = document.getElementById('bill-linked-account');
+  const liabilities = state.accounts.filter((a) => a.kind === 'liability');
+  sel.innerHTML = '<option value="">No — this is a standalone expense (utilities, rent, etc.)</option>'
+    + liabilities.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+}
 
 function openBillModal(id) {
   editingBillId = id || null;
@@ -1719,6 +1854,7 @@ function openBillModal(id) {
   document.getElementById('bill-mark-paid').disabled = false;
   populateBillCategorySelect();
   populateBillAccountSelect();
+  populateBillLinkedAccountSelect();
 
   if (id) {
     const b = state.bills.find((x) => x.id === id);
@@ -1734,6 +1870,7 @@ function openBillModal(id) {
     if (b.account && [...document.getElementById('bill-pay-account').options].some((o) => o.value === b.account)) {
       document.getElementById('bill-pay-account').value = b.account;
     }
+    document.getElementById('bill-linked-account').value = b.linkedAccount || '';
     delBtn.style.display = 'block';
     payWrap.style.display = b.status === 'pending' ? 'block' : 'none';
   } else {
@@ -1743,6 +1880,7 @@ function openBillModal(id) {
     document.getElementById('bill-due').value = todayStr();
     document.getElementById('bill-recurring').value = 'none';
     document.getElementById('bill-note').value = '';
+    document.getElementById('bill-linked-account').value = '';
     delBtn.style.display = 'none';
     payWrap.style.display = 'none';
   }
@@ -1765,14 +1903,18 @@ document.getElementById('bill-save').addEventListener('click', () => {
   const recurring = document.getElementById('bill-recurring').value;
   const note = document.getElementById('bill-note').value.trim();
   const category = document.getElementById('bill-category').value;
+  const linkedAccount = document.getElementById('bill-linked-account').value || undefined;
   if (!name || !amount || amount <= 0 || !dueDate) { toast('Fill in name, amount, and due date'); return; }
 
   if (editingBillId) {
     const b = state.bills.find((x) => x.id === editingBillId);
-    Object.assign(b, { name, amount, dueDate, recurring, note, category });
+    Object.assign(b, { name, amount, dueDate, recurring, note, category, linkedAccount });
+    if (!linkedAccount) delete b.linkedAccount;
     toast('Bill updated');
   } else {
-    state.bills.push({ id: uid(), name, amount, dueDate, recurring, note, category, status: 'pending', createdAt: Date.now() });
+    const newBill = { id: uid(), name, amount, dueDate, recurring, note, category, status: 'pending', createdAt: Date.now() };
+    if (linkedAccount) newBill.linkedAccount = linkedAccount;
+    state.bills.push(newBill);
     toast('Bill added');
   }
   saveData();
@@ -1802,15 +1944,25 @@ document.getElementById('bill-mark-paid').addEventListener('click', (e) => {
   const category = document.getElementById('bill-category').value;
   const amount = parseFloat(document.getElementById('bill-amount').value) || b.amount;
   const dueDate = document.getElementById('bill-due').value || b.dueDate;
+  const linkedAccount = document.getElementById('bill-linked-account').value || undefined;
   if (!account) { toast('Pick an account to pay from'); btn.disabled = false; return; }
+  if (linkedAccount && linkedAccount === account) { toast('Pay-from account and linked account must be different'); btn.disabled = false; return; }
 
   const now = Date.now();
   const paidDate = todayStr();
-  state.transactions.push({
-    id: uid(), type: 'expense', amount, category, method: account,
-    date: paidDate, note: `Bill payment: ${b.name}${b.note ? ' - ' + b.note : ''}`,
-    createdAt: now, updatedAt: now,
-  });
+  if (linkedAccount) {
+    state.transactions.push({
+      id: uid(), type: 'transfer', amount, method: account, toAccount: linkedAccount, category: 'Transfer',
+      date: paidDate, note: `Bill payment: ${b.name}${b.note ? ' - ' + b.note : ''}`,
+      createdAt: now, updatedAt: now,
+    });
+  } else {
+    state.transactions.push({
+      id: uid(), type: 'expense', amount, category, method: account,
+      date: paidDate, note: `Bill payment: ${b.name}${b.note ? ' - ' + b.note : ''}`,
+      createdAt: now, updatedAt: now,
+    });
+  }
 
   b.status = 'paid';
   b.amount = amount;
@@ -1818,13 +1970,16 @@ document.getElementById('bill-mark-paid').addEventListener('click', (e) => {
   b.account = account;
   b.dueDate = dueDate;
   b.paidDate = paidDate;
+  if (linkedAccount) b.linkedAccount = linkedAccount;
 
   if (b.recurring !== 'none') {
     const nextDate = nextDueDate(dueDate, b.recurring);
-    state.bills.push({
+    const nextBill = {
       id: uid(), name: b.name, amount: b.amount, category: b.category, account: b.account,
       dueDate: nextDate, recurring: b.recurring, note: b.note, status: 'pending', createdAt: now,
-    });
+    };
+    if (linkedAccount) nextBill.linkedAccount = linkedAccount;
+    state.bills.push(nextBill);
   }
 
   saveData();

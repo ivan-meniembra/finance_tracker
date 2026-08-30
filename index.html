@@ -96,6 +96,10 @@
         <div class="value" id="nw-total" style="font-size:22px;margin-top:2px">0</div>
       </div>
     </div>
+    <div class="card" id="debt-trend-card" style="display:none">
+      <h3 class="section-title" style="margin-top:0">Total debt over time</h3>
+      <svg class="bar-chart" id="debt-trend-svg" viewBox="0 0 320 140" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
     <div class="card">
       <h3 class="section-title" style="margin-top:0">Accounts</h3>
       <ul class="txn-list" id="account-list"></ul>
@@ -135,6 +139,11 @@
     </div>
     <div class="card">
       <h3 class="section-title" style="margin-top:0">Results (<span id="audit-count">0</span>)</h3>
+      <div class="summary-grid" id="audit-summary" style="margin-bottom:14px">
+        <div class="stat"><div class="label">Income</div><div class="value income" id="audit-sum-income">0</div></div>
+        <div class="stat"><div class="label">Expense</div><div class="value expense" id="audit-sum-expense">0</div></div>
+        <div class="stat"><div class="label">Net</div><div class="value" id="audit-sum-net">0</div></div>
+      </div>
       <ul class="txn-list" id="audit-list"></ul>
       <div class="empty-state" id="audit-empty" style="display:none">No matching transactions.</div>
     </div>
@@ -425,6 +434,12 @@
     <select id="bill-category"></select>
     <label>Note (optional)</label>
     <textarea id="bill-note"></textarea>
+
+    <label>This bill pays down an account (optional)</label>
+    <select id="bill-linked-account">
+      <option value="">No — this is a standalone expense (utilities, rent, etc.)</option>
+    </select>
+    <p style="font-size:12px;color:var(--muted)">Pick this for credit card / PayLater statement bills. Marking it paid will record a transfer (reducing both your paying account and this card's balance) instead of a plain expense — avoids double-counting purchases you already logged on the card.</p>
 
     <div id="bill-pay-wrap" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
       <label style="margin-top:0">Pay from account</label>

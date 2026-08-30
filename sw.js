@@ -1,4 +1,4 @@
-const CACHE = 'fintrack-v17';
+const CACHE = 'fintrack-v21';
 const ASSETS = ['./index.html', './style.css', './app.js', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', (e) => {
