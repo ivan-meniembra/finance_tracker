@@ -655,10 +655,28 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+let txnSortMode = localStorage.getItem('fintrack_txn_sort') || 'date';
+
+function setTxnSortMode(mode) {
+  txnSortMode = mode;
+  localStorage.setItem('fintrack_txn_sort', mode);
+  document.querySelectorAll('[data-sort-toggle] [data-sort]').forEach((b) => b.classList.toggle('active', b.dataset.sort === mode));
+  if (activeTabView === 'home') renderHome();
+  if (activeTabView === 'audit') applyAuditFilters();
+}
+
+document.querySelectorAll('[data-sort-toggle] [data-sort]').forEach((btn) => {
+  btn.classList.toggle('active', btn.dataset.sort === txnSortMode);
+  btn.addEventListener('click', () => setTxnSortMode(btn.dataset.sort));
+});
+
 function renderTxnList(txns, listId, emptyId) {
   const list = document.getElementById(listId);
   const empty = document.getElementById(emptyId);
-  const sorted = [...txns].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
+  const sorted = [...txns].sort((a, b) => {
+    if (txnSortMode === 'amount') return b.amount - a.amount;
+    return a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0);
+  });
   list.innerHTML = sorted.map(txnRowHtml).join('');
   empty.style.display = sorted.length ? 'none' : 'block';
   list.querySelectorAll('.txn-item').forEach((el) => {
