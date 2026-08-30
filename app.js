@@ -1161,7 +1161,9 @@ function normalizeDate(str) {
 /* ---------- Accounts / net worth ---------- */
 function accountBalance(account) {
   let bal = account.initialBalance || 0;
+  const today = todayStr();
   for (const t of state.transactions) {
+    if (t.date > today) continue; // future-dated transactions (e.g. upcoming installments) don't count toward the CURRENT balance yet
     if (t.type === 'transfer') {
       const isLiability = account.kind === 'liability';
       if (t.method === account.name) bal += isLiability ? t.amount : -t.amount; // money leaving this account
