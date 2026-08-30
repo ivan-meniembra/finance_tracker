@@ -354,7 +354,25 @@
     </div>
     <label>Annual interest rate (%, optional)</label>
     <input type="number" id="account-interest-rate" inputmode="decimal" step="0.01" placeholder="e.g. 4.5">
-    <p style="font-size:12px;color:var(--muted)">If set, interest accrues automatically every day (compounded daily) and is logged as a transaction — no manual entry needed.</p>
+    <label>Interest credited</label>
+    <select id="account-interest-frequency">
+      <option value="daily">Daily</option>
+      <option value="monthly">Monthly</option>
+      <option value="annually">Annually</option>
+    </select>
+    <label>Compounding</label>
+    <select id="account-interest-compounding">
+      <option value="compound">Compound (interest earns interest)</option>
+      <option value="simple">Simple (no compounding)</option>
+    </select>
+    <label>Day-count basis</label>
+    <select id="account-interest-basis">
+      <option value="365">365 days/year</option>
+      <option value="360">360 days/year</option>
+    </select>
+    <label>Withholding tax on interest (%, optional)</label>
+    <input type="number" id="account-interest-tax" inputmode="decimal" step="0.01" placeholder="e.g. 20 for PH final tax">
+    <p style="font-size:12px;color:var(--muted)">Only the net amount (after tax) is credited to your balance, matching your actual statement. Interest posts as a transaction on the schedule you picked above — no manual entry needed.</p>
     <div class="btn-row">
       <button class="btn btn-secondary" id="account-cancel">Cancel</button>
       <button class="btn btn-danger" id="account-delete" style="display:none">Delete</button>

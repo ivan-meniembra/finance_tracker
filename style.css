@@ -171,6 +171,13 @@ main { padding: 14px; max-width: 720px; margin: 0 auto; }
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.15s ease;
+  width: auto;
+  height: auto;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .period-nav .period-label:active { background: var(--panel-soft); }
 
@@ -219,6 +226,15 @@ main { padding: 14px; max-width: 720px; margin: 0 auto; }
 }
 
 .txn-list { list-style: none; margin: 0; padding: 0; }
+.account-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 12px 4px 6px;
+}
+.account-group-label:first-child { padding-top: 0; }
 .txn-item {
   display: flex;
   justify-content: space-between;

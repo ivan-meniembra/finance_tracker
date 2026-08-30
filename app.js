@@ -1301,32 +1301,54 @@ function normalizeDate(str) {
 }
 
 /* ---------- Accounts / net worth ---------- */
+function nextInterestCreditDate(dateStr, frequency) {
+  const d = parseDate(dateStr);
+  if (frequency === 'monthly') d.setMonth(d.getMonth() + 1);
+  else if (frequency === 'annually') d.setFullYear(d.getFullYear() + 1);
+  else d.setDate(d.getDate() + 1); // daily
+  return d.toISOString().slice(0, 10);
+}
+
+const INTEREST_FREQUENCY_LABEL = { daily: 'daily', monthly: 'monthly', annually: 'annual' };
+
 function accrueInterestForAccount(acc) {
   if (!acc.interestRate) return false;
   const today = todayStr();
+  const frequency = acc.interestFrequency || 'daily';
   const last = acc.lastInterestDate || today;
   if (last >= today) return false;
+
+  const nextCredit = nextInterestCreditDate(last, frequency);
+  if (nextCredit > today) return false; // not due yet per the chosen crediting schedule
+
   const days = Math.round((parseDate(today) - parseDate(last)) / 86400000);
   if (days <= 0) { acc.lastInterestDate = today; return false; }
 
   const principal = accountBalance(acc);
-  const dailyRate = acc.interestRate / 100 / 365;
-  const interestAmt = Math.round((principal * (Math.pow(1 + dailyRate, days) - 1)) * 100) / 100;
+  const basis = acc.interestBasis || 365;
+  const dailyRate = acc.interestRate / 100 / basis;
+  const grossInterest = acc.interestCompounding === 'simple'
+    ? principal * dailyRate * days
+    : principal * (Math.pow(1 + dailyRate, days) - 1);
+  const taxRate = acc.interestTaxRate || 0;
+  const netInterest = Math.round((grossInterest * (1 - taxRate / 100)) * 100) / 100;
   acc.lastInterestDate = today;
-  if (interestAmt === 0) return false;
+  if (netInterest === 0) return false;
 
   const isLiability = acc.kind === 'liability';
   const catList = isLiability ? state.categories.expense : state.categories.income;
   if (!catList.includes('Interest')) catList.push('Interest');
 
+  const compoundingLabel = acc.interestCompounding === 'simple' ? 'simple' : 'compound';
+  const taxNote = taxRate ? `, after ${taxRate}% tax` : '';
   state.transactions.push({
     id: uid(),
     type: isLiability ? 'expense' : 'income',
-    amount: Math.abs(interestAmt),
+    amount: Math.abs(netInterest),
     category: 'Interest',
     method: acc.name,
     date: today,
-    note: `Auto-accrued interest (${days} day${days > 1 ? 's' : ''} @ ${acc.interestRate}% APY)`,
+    note: `Auto-accrued interest (${days} day${days > 1 ? 's' : ''}, ${compoundingLabel}, credited ${INTEREST_FREQUENCY_LABEL[frequency]} @ ${acc.interestRate}% APY/${basis}${taxNote})`,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   });
@@ -1368,14 +1390,15 @@ function renderAccounts() {
   const empty = document.getElementById('account-empty');
 
   const withBalances = state.accounts.map((a) => ({ account: a, bal: accountBalance(a) }));
-  withBalances.sort((x, y) => y.bal - x.bal);
+  const assetRows = withBalances.filter((x) => x.account.kind === 'asset').sort((x, y) => y.bal - x.bal);
+  const liabilityRows = withBalances.filter((x) => x.account.kind === 'liability').sort((x, y) => y.bal - x.bal);
 
-  const rows = withBalances.map(({ account: a, bal }) => {
+  const renderRow = ({ account: a, bal }) => {
     if (a.kind === 'asset') assets += bal;
     else liabilities += bal;
-    const metaParts = [a.kind === 'liability' ? 'Liability' : 'Asset'];
+    const metaParts = [];
     if (a.kind === 'liability' && a.creditLimit) metaParts.push(`Limit ${fmtMoney(a.creditLimit)} · Available ${fmtMoney(a.creditLimit - bal)}`);
-    if (a.interestRate) metaParts.push(`${a.interestRate}% APY`);
+    if (a.interestRate) metaParts.push(`${a.interestRate}% APY (${a.interestFrequency || 'daily'})`);
     return `<li class="txn-item" data-name="${escapeHtml(a.name)}">
       <div class="txn-main">
         <div class="txn-cat">${escapeHtml(a.name)}</div>
@@ -1383,10 +1406,14 @@ function renderAccounts() {
       </div>
       <div class="txn-amt ${a.kind === 'liability' ? 'expense' : 'income'}">${fmtMoney(bal)}</div>
     </li>`;
-  });
+  };
 
-  list.innerHTML = rows.join('');
-  empty.style.display = rows.length ? 'none' : 'block';
+  let html = '';
+  if (assetRows.length) html += `<div class="account-group-label">Assets</div>` + assetRows.map(renderRow).join('');
+  if (liabilityRows.length) html += `<div class="account-group-label">Liabilities</div>` + liabilityRows.map(renderRow).join('');
+
+  list.innerHTML = html;
+  empty.style.display = withBalances.length ? 'none' : 'block';
   list.querySelectorAll('.txn-item').forEach((el) => {
     el.addEventListener('click', () => openAccountModal(el.dataset.name));
   });
@@ -1409,6 +1436,10 @@ function openAccountModal(name) {
   const balInput = document.getElementById('account-balance');
   const limitInput = document.getElementById('account-limit');
   const interestInput = document.getElementById('account-interest-rate');
+  const interestFreqSel = document.getElementById('account-interest-frequency');
+  const compoundingSel = document.getElementById('account-interest-compounding');
+  const basisSel = document.getElementById('account-interest-basis');
+  const taxInput = document.getElementById('account-interest-tax');
 
   if (name) {
     const a = state.accounts.find((x) => x.name === name);
@@ -1418,6 +1449,10 @@ function openAccountModal(name) {
     balInput.value = a.initialBalance;
     limitInput.value = a.creditLimit || '';
     interestInput.value = a.interestRate || '';
+    interestFreqSel.value = a.interestFrequency || 'daily';
+    compoundingSel.value = a.interestCompounding || 'compound';
+    basisSel.value = String(a.interestBasis || 365);
+    taxInput.value = a.interestTaxRate || '';
     delBtn.style.display = 'block';
   } else {
     document.getElementById('account-modal-title').textContent = 'Add account';
@@ -1426,6 +1461,10 @@ function openAccountModal(name) {
     balInput.value = '';
     limitInput.value = '';
     interestInput.value = '';
+    interestFreqSel.value = 'daily';
+    compoundingSel.value = 'compound';
+    basisSel.value = '365';
+    taxInput.value = '';
     delBtn.style.display = 'none';
   }
   updateAccountKindUI();
@@ -1456,6 +1495,11 @@ document.getElementById('account-save').addEventListener('click', () => {
   const creditLimit = kind === 'liability' ? (parseFloat(document.getElementById('account-limit').value) || 0) : undefined;
   const interestRateRaw = document.getElementById('account-interest-rate').value;
   const interestRate = interestRateRaw !== '' ? parseFloat(interestRateRaw) : undefined;
+  const interestFrequency = document.getElementById('account-interest-frequency').value;
+  const interestCompounding = document.getElementById('account-interest-compounding').value;
+  const interestBasis = parseInt(document.getElementById('account-interest-basis').value, 10);
+  const interestTaxRateRaw = document.getElementById('account-interest-tax').value;
+  const interestTaxRate = interestTaxRateRaw !== '' ? parseFloat(interestTaxRateRaw) : undefined;
 
   if (editingAccountName) {
     const a = state.accounts.find((x) => x.name === editingAccountName);
@@ -1464,12 +1508,12 @@ document.getElementById('account-save').addEventListener('click', () => {
       state.transactions.forEach((t) => { if (t.method === editingAccountName) t.method = name; });
     }
     const hadRate = !!a.interestRate;
-    Object.assign(a, { name, kind, initialBalance, creditLimit, interestRate });
+    Object.assign(a, { name, kind, initialBalance, creditLimit, interestRate, interestFrequency, interestCompounding, interestBasis, interestTaxRate });
     if (interestRate && !hadRate) a.lastInterestDate = todayStr();
-    if (!interestRate) delete a.lastInterestDate;
+    if (!interestRate) { delete a.lastInterestDate; delete a.interestFrequency; delete a.interestCompounding; delete a.interestBasis; delete a.interestTaxRate; }
   } else {
     if (state.accounts.some((x) => x.name === name)) { toast('An account with that name already exists'); return; }
-    const newAccount = { name, kind, initialBalance, creditLimit, interestRate };
+    const newAccount = { name, kind, initialBalance, creditLimit, interestRate, interestFrequency, interestCompounding, interestBasis, interestTaxRate };
     if (interestRate) newAccount.lastInterestDate = todayStr();
     state.accounts.push(newAccount);
   }
