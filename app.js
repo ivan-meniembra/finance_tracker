@@ -2007,6 +2007,18 @@ document.getElementById('bill-mark-paid').addEventListener('click', (e) => {
   renderBills();
 });
 
+// Safety net: strip common markdown syntax in case the model ignores the plain-text instruction.
+function stripMarkdown(text) {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '$1')   // **bold**
+    .replace(/\*(.*?)\*/g, '$1')       // *italic*
+    .replace(/__(.*?)__/g, '$1')       // __bold__
+    .replace(/_(.*?)_/g, '$1')         // _italic_
+    .replace(/`(.*?)`/g, '$1')         // `code`
+    .replace(/^#{1,6}\s+/gm, '')       // # headings
+    .replace(/^[-*+]\s+/gm, '');       // - bullet points
+}
+
 /* ---------- AI chart insights (optional, online-only) ---------- */
 document.getElementById('btn-ai-insight').addEventListener('click', async () => {
   const box = document.getElementById('ai-insight-box');
@@ -2047,7 +2059,7 @@ document.getElementById('btn-ai-insight').addEventListener('click', async () => 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           systemInstruction: {
-            parts: [{ text: 'You are a concise personal finance assistant. Given aggregated spending totals for a period, give a 2-4 sentence plain-language insight: notable patterns, biggest category, and one practical suggestion. No markdown.' }],
+            parts: [{ text: 'You are a concise personal finance assistant. Given aggregated spending totals for a period, give a 2-4 sentence plain-language insight: notable patterns, biggest category, and one practical suggestion. Respond in plain text only — no markdown formatting whatsoever: do not use asterisks, underscores, backticks, hashes, or bullet points for emphasis or structure.' }],
           },
           contents: [{ parts: [{ text: JSON.stringify(summary) }] }],
           generationConfig: { maxOutputTokens: 200 },
@@ -2059,7 +2071,8 @@ document.getElementById('btn-ai-insight').addEventListener('click', async () => 
       throw new Error(`API error ${res.status}: ${errText.slice(0, 200)}`);
     }
     const data = await res.json();
-    box.textContent = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'No insight returned.';
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    box.textContent = rawText ? stripMarkdown(rawText) : 'No insight returned.';
   } catch (err) {
     box.textContent = 'Could not get an insight: ' + err.message;
   }
