@@ -1100,6 +1100,61 @@ function renderSettings() {
   document.getElementById('gemini-key').value = state.geminiKey || '';
   renderBudgetSettings();
   renderChipList('bill-name-list', state.billNames, removeBillName);
+  renderNotificationStatus();
+}
+
+/* ---------- Bill reminders (foreground-only local notifications) ---------- */
+function renderNotificationStatus() {
+  const statusEl = document.getElementById('notif-status');
+  const btn = document.getElementById('btn-enable-notifications');
+  if (!('Notification' in window)) {
+    statusEl.textContent = 'Notifications are not supported in this browser.';
+    btn.style.display = 'none';
+    return;
+  }
+  if (Notification.permission === 'granted') {
+    statusEl.textContent = '✓ Enabled — you\'ll be notified about due bills when you open the app.';
+    btn.style.display = 'none';
+  } else if (Notification.permission === 'denied') {
+    statusEl.textContent = 'Blocked — you\'ll need to re-enable notifications for this app in your phone/browser settings.';
+    btn.style.display = 'none';
+  } else {
+    statusEl.textContent = 'Not enabled yet.';
+    btn.style.display = 'block';
+  }
+}
+
+document.getElementById('btn-enable-notifications').addEventListener('click', async () => {
+  if (!('Notification' in window)) return;
+  await Notification.requestPermission();
+  renderNotificationStatus();
+  if (Notification.permission === 'granted') checkAndNotifyDueBills(true);
+});
+
+async function showBillNotification(title, body) {
+  if ('serviceWorker' in navigator) {
+    const reg = await navigator.serviceWorker.ready.catch(() => null);
+    if (reg) { reg.showNotification(title, { body, icon: 'icon.svg' }); return; }
+  }
+  new Notification(title, { body, icon: 'icon.svg' });
+}
+
+function checkAndNotifyDueBills(force) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const today = todayStr();
+  if (!force && localStorage.getItem('fintrack_last_bill_notify') === today) return;
+
+  const dueBills = state.bills.filter((b) => billBucket(b, today) === 'due');
+  localStorage.setItem('fintrack_last_bill_notify', today);
+  if (!dueBills.length) return;
+
+  if (dueBills.length === 1) {
+    const b = dueBills[0];
+    showBillNotification('Bill due', `${b.name} — ${fmtMoney(b.amount)} due ${b.dueDate}`);
+  } else {
+    const total = dueBills.reduce((s, b) => s + b.amount, 0);
+    showBillNotification(`${dueBills.length} bills due or overdue`, dueBills.map((b) => b.name).join(', ') + ` — total ${fmtMoney(total)}`);
+  }
 }
 
 function removeBillName(val) {
@@ -2037,11 +2092,13 @@ document.getElementById('btn-ai-insight').addEventListener('click', async () => 
   let income = 0, expense = 0;
   const byCat = {};
   for (const t of txns) {
+    if (t.type === 'transfer') continue; // transfers between your own accounts aren't income or spending
     if (t.type === 'income') income += t.amount;
     else { expense += t.amount; byCat[t.category] = (byCat[t.category] || 0) + t.amount; }
   }
   const summary = {
     period: periodLabel(currentPeriodType, currentAnchor),
+    currency: 'Philippine Peso (₱ / PHP)',
     income: Math.round(income * 100) / 100,
     expense: Math.round(expense * 100) / 100,
     byCategory: Object.fromEntries(Object.entries(byCat).map(([k, v]) => [k, Math.round(v * 100) / 100])),
@@ -2050,29 +2107,47 @@ document.getElementById('btn-ai-insight').addEventListener('click', async () => 
   box.style.display = 'block';
   box.textContent = 'Thinking…';
 
-  try {
+  const GEMINI_SYSTEM_PROMPT = 'You are a concise personal finance assistant for a user in the Philippines. All amounts given to you are in Philippine Pesos (PHP) — always refer to money using "pesos" or the ₱ sign, NEVER dollars or $. Given aggregated spending totals for a period, respond with EXACTLY 3 short bullet points and nothing else: one on the most notable spending pattern, one on the biggest category, one practical suggestion. Each bullet must be one short sentence (under 20 words). Start each bullet with "• " (a bullet character followed by a space) and put each on its own line. Respond with ONLY the 3 bullet lines — no intro, no markdown asterisks/underscores/backticks/hashes, no labels like "Sentence 1", nothing before or after the bullets.';
+
+  async function callGemini(includeThinkingConfig) {
     const model = 'gemini-3.6-flash';
-    const res = await fetch(
+    const generationConfig = { maxOutputTokens: 1024 };
+    if (includeThinkingConfig) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    return fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(state.geminiKey)}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: 'You are a concise personal finance assistant. Given aggregated spending totals for a period, give a 2-4 sentence plain-language insight: notable patterns, biggest category, and one practical suggestion. Respond in plain text only — no markdown formatting whatsoever: do not use asterisks, underscores, backticks, hashes, or bullet points for emphasis or structure.' }],
-          },
+          systemInstruction: { parts: [{ text: GEMINI_SYSTEM_PROMPT }] },
           contents: [{ parts: [{ text: JSON.stringify(summary) }] }],
-          generationConfig: { maxOutputTokens: 200 },
+          generationConfig,
         }),
       }
     );
+  }
+
+  try {
+    let res = await callGemini(true);
+    if (!res.ok && res.status === 400) {
+      // Some model versions may reject thinkingConfig as an unrecognized field — retry without it.
+      res = await callGemini(false);
+    }
     if (!res.ok) {
+      if (res.status === 429) {
+        throw new Error("You've hit Gemini's free-tier rate limit. Wait a minute (or until tomorrow, if it's the daily limit) and try again.");
+      }
       const errText = await res.text();
       throw new Error(`API error ${res.status}: ${errText.slice(0, 200)}`);
     }
     const data = await res.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    box.textContent = rawText ? stripMarkdown(rawText) : 'No insight returned.';
+    const candidate = data.candidates?.[0];
+    // Some "thinking" models return multiple parts, with reasoning marked `thought: true` — only join the real answer parts.
+    const answerParts = (candidate?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || '');
+    const rawText = answerParts.join('').trim();
+    let shown = rawText ? stripMarkdown(rawText) : 'No insight returned.';
+    if (candidate?.finishReason === 'MAX_TOKENS') shown += ' [response was cut off — try again or shorten the period]';
+    box.textContent = shown;
   } catch (err) {
     box.textContent = 'Could not get an insight: ' + err.message;
   }
@@ -2107,3 +2182,4 @@ if ('serviceWorker' in navigator) {
 document.getElementById('txn-date').value = todayStr();
 accrueAllInterest();
 renderHome();
+checkAndNotifyDueBills(false);

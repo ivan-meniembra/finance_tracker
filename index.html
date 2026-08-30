@@ -59,7 +59,7 @@
       <svg class="bar-chart" id="chart-svg" viewBox="0 0 320 160" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="legend" id="chart-legend"></div>
       <button class="btn btn-secondary" id="btn-ai-insight" style="width:100%;margin-top:10px">✨ Get AI insight</button>
-      <div id="ai-insight-box" style="display:none;margin-top:10px;font-size:13px;color:var(--text);background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:10px"></div>
+      <div id="ai-insight-box" style="display:none;margin-top:10px;font-size:13px;color:var(--text);background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:10px;white-space:pre-line;line-height:1.6"></div>
     </div>
 
     <div class="card">
@@ -228,6 +228,12 @@
       <label>Gemini API key</label>
       <input type="password" id="gemini-key" placeholder="AIza...">
       <button class="btn btn-secondary" id="btn-save-key" style="width:100%;margin-top:10px">Save key</button>
+    </div>
+    <div class="card">
+      <h3 class="section-title" style="margin-top:0">Bill reminders</h3>
+      <p style="font-size:13px;color:var(--muted)">Important: this can only notify you <strong>while you have the app open</strong> — it cannot send you a notification while your phone is locked or the app is closed. A true background/lock-screen alert would need a server, which this app deliberately doesn't have. When enabled, opening the app any time at or after 6:00 AM (once per day) checks for due/overdue bills and notifies you if there are any.</p>
+      <p style="font-size:12px;color:var(--muted)" id="notif-status">Checking permission…</p>
+      <button class="btn btn-primary" id="btn-enable-notifications" style="width:100%;margin-top:10px">Enable bill reminders</button>
     </div>
     <div class="card">
       <h3 class="section-title" style="margin-top:0">Danger zone</h3>
