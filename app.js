@@ -233,6 +233,8 @@ let homeMode = 'normal'; // 'normal' | 'iou'
 
 function renderHome() {
   updateIouBadge();
+  document.getElementById('home-period-tabs').style.display = homeMode === 'iou' ? 'none' : 'flex';
+  document.getElementById('home-period-nav').style.display = homeMode === 'iou' ? 'none' : 'flex';
   if (homeMode === 'iou') { renderIouView(); return; }
 
   document.getElementById('period-label').textContent = periodLabel(currentPeriodType, currentAnchor);
@@ -1481,8 +1483,6 @@ function billsDueTodayOrOverdue(today) {
 
 function checkBillReminderPopup() {
   const today = todayStr();
-  if (localStorage.getItem('fintrack_last_bill_popup') === today) return;
-  localStorage.setItem('fintrack_last_bill_popup', today);
   const due = billsDueTodayOrOverdue(today);
   if (!due.length) return;
   showBillReminderModal(due, today);

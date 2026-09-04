@@ -28,13 +28,13 @@
 
   <!-- HOME VIEW -->
   <section id="view-home" class="view active">
-    <div class="period-tabs">
+    <div class="period-tabs" id="home-period-tabs">
       <button data-period="day" class="active">Day</button>
       <button data-period="week">Week</button>
       <button data-period="month">Month</button>
       <button data-period="year">Year</button>
     </div>
-    <div class="period-nav">
+    <div class="period-nav" id="home-period-nav">
       <button id="period-prev">‹</button>
       <button class="period-label" id="period-label">-</button>
       <button id="period-next">›</button>
@@ -397,7 +397,7 @@
 </div>
 
 <!-- BILL DUE REMINDER POPUP -->
-<div class="modal-overlay" id="bill-reminder-overlay">
+<div class="modal-overlay center-modal" id="bill-reminder-overlay">
   <div class="modal">
     <h2>🔔 Bills due</h2>
     <p style="font-size:13px;color:var(--muted)" id="bill-reminder-summary"></p>
