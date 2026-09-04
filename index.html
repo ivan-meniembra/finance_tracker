@@ -29,9 +29,9 @@
   <!-- HOME VIEW -->
   <section id="view-home" class="view active">
     <div class="period-tabs">
-      <button data-period="day">Day</button>
+      <button data-period="day" class="active">Day</button>
       <button data-period="week">Week</button>
-      <button data-period="month" class="active">Month</button>
+      <button data-period="month">Month</button>
       <button data-period="year">Year</button>
     </div>
     <div class="period-nav">
@@ -40,51 +40,76 @@
       <button id="period-next">›</button>
     </div>
 
-    <div class="card">
-      <div class="summary-grid">
-        <div class="stat"><div class="label">Income</div><div class="value income" id="sum-income">0</div></div>
-        <div class="stat"><div class="label">Expense</div><div class="value expense" id="sum-expense">0</div></div>
-        <div class="stat"><div class="label">Net</div><div class="value" id="sum-net">0</div></div>
-      </div>
+    <div class="chart-type-toggle" id="home-mode-toggle" style="margin-bottom:12px">
+      <button data-home-mode="normal" class="active">Overview</button>
+      <button data-home-mode="iou">IOUs <span class="tab-badge" id="badge-iou"></span></button>
     </div>
 
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <h3 class="section-title" style="margin-top:0">Spending by category</h3>
-        <div class="chart-type-toggle" id="chart-type-toggle">
-          <button data-chart-type="donut">Donut</button>
-          <button data-chart-type="bar" class="active">Bar</button>
+    <div id="home-normal-view">
+      <div class="card">
+        <div class="summary-grid">
+          <div class="stat"><div class="label">Income</div><div class="value income" id="sum-income">0</div></div>
+          <div class="stat"><div class="label">Expense</div><div class="value expense" id="sum-expense">0</div></div>
+          <div class="stat"><div class="label">Net</div><div class="value" id="sum-net">0</div></div>
         </div>
       </div>
-      <svg class="bar-chart" id="chart-svg" viewBox="0 0 320 160" preserveAspectRatio="xMidYMid meet"></svg>
-      <div class="legend" id="chart-legend"></div>
-      <button class="btn btn-secondary" id="btn-ai-insight" style="width:100%;margin-top:10px">✨ Get AI insight</button>
-      <div id="ai-insight-box" style="display:none;margin-top:10px;font-size:13px;color:var(--text);background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:10px;white-space:pre-line;line-height:1.6"></div>
-    </div>
 
-    <div class="card">
-      <h3 class="section-title" style="margin-top:0">Income vs expense</h3>
-      <svg class="bar-chart" id="ie-chart-svg" viewBox="0 0 320 160" preserveAspectRatio="xMidYMid meet"></svg>
-      <svg class="bar-chart" id="trend-chart-svg" viewBox="0 0 320 140" preserveAspectRatio="xMidYMid meet" style="margin-top:6px"></svg>
-      <div class="legend" id="trend-legend" style="margin-top:2px"></div>
-    </div>
-
-    <div class="card" id="budget-card" style="display:none">
-      <h3 class="section-title" style="margin-top:0" id="budget-card-title">Monthly budget</h3>
-      <div id="budget-content"></div>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <h3 class="section-title" style="margin-top:0" id="txn-list-title">Transactions</h3>
-        <button id="txn-filter-clear" style="display:none;background:none;border:none;color:var(--accent);font-size:12px;font-weight:600;font-family:inherit;padding:4px 0">✕ Clear filter</button>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3 class="section-title" style="margin-top:0">Spending by category</h3>
+          <div class="chart-type-toggle" id="chart-type-toggle">
+            <button data-chart-type="donut">Donut</button>
+            <button data-chart-type="bar" class="active">Bar</button>
+          </div>
+        </div>
+        <svg class="bar-chart" id="chart-svg" viewBox="0 0 320 160" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="legend" id="chart-legend"></div>
+        <button class="btn btn-secondary" id="btn-ai-insight" style="width:100%;margin-top:10px">✨ Get AI insight</button>
+        <div id="ai-insight-box" style="display:none;margin-top:10px;font-size:13px;color:var(--text);background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:10px;white-space:pre-line;line-height:1.6"></div>
       </div>
-      <div class="chart-type-toggle" data-sort-toggle style="margin-bottom:10px">
-        <button data-sort="date" class="active">Date</button>
-        <button data-sort="amount">Amount</button>
+
+      <div class="card">
+        <h3 class="section-title" style="margin-top:0">Income vs expense</h3>
+        <svg class="bar-chart" id="ie-chart-svg" viewBox="0 0 320 160" preserveAspectRatio="xMidYMid meet"></svg>
+        <svg class="bar-chart" id="trend-chart-svg" viewBox="0 0 320 140" preserveAspectRatio="xMidYMid meet" style="margin-top:6px"></svg>
+        <div class="legend" id="trend-legend" style="margin-top:2px"></div>
       </div>
-      <ul class="txn-list" id="txn-list"></ul>
-      <div class="empty-state" id="txn-empty" style="display:none">No transactions in this period.</div>
+
+      <div class="card" id="budget-card" style="display:none">
+        <h3 class="section-title" style="margin-top:0" id="budget-card-title">Monthly budget</h3>
+        <div id="budget-content"></div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3 class="section-title" style="margin-top:0" id="txn-list-title">Transactions</h3>
+          <button id="txn-filter-clear" style="display:none;background:none;border:none;color:var(--accent);font-size:12px;font-weight:600;font-family:inherit;padding:4px 0">✕ Clear filter</button>
+        </div>
+        <div class="chart-type-toggle" data-sort-toggle style="margin-bottom:10px">
+          <button data-sort="date" class="active">Date</button>
+          <button data-sort="amount">Amount</button>
+        </div>
+        <ul class="txn-list" id="txn-list"></ul>
+        <div class="empty-state" id="txn-empty" style="display:none">No transactions in this period.</div>
+      </div>
+    </div>
+
+    <div id="home-iou-view" style="display:none">
+      <div class="card">
+        <div class="summary-grid" style="grid-template-columns:1fr">
+          <div class="stat"><div class="label">Total owed to you</div><div class="value income" id="iou-total">0</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 class="section-title" style="margin-top:0">Owed by person</h3>
+        <svg class="bar-chart" id="iou-chart-svg" viewBox="0 0 320 160" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="legend" id="iou-chart-legend"></div>
+      </div>
+      <div class="card">
+        <h3 class="section-title" style="margin-top:0">Open IOUs</h3>
+        <ul class="txn-list" id="iou-list"></ul>
+        <div class="empty-state" id="iou-empty" style="display:none">No one owes you anything right now.</div>
+      </div>
     </div>
   </section>
 
@@ -328,10 +353,42 @@
       </div>
     </div>
 
+    <div id="split-wrap" style="display:none">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:14px;color:var(--text)">
+        <input type="checkbox" id="txn-split" style="width:auto">
+        Someone owes me for this
+      </label>
+      <div id="split-fields" style="display:none">
+        <div id="split-owed-rows"></div>
+        <button type="button" class="btn btn-secondary" id="split-add-person" style="width:100%;margin-top:8px">+ Add person</button>
+        <p style="font-size:12px;color:var(--muted)" id="split-preview"></p>
+      </div>
+    </div>
+
     <div class="btn-row">
       <button class="btn btn-secondary" id="txn-cancel">Cancel</button>
       <button class="btn btn-danger" id="txn-delete" style="display:none">Delete</button>
       <button class="btn btn-primary" id="txn-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- IOU SETTLE MODAL -->
+<div class="modal-overlay" id="iou-settle-modal-overlay">
+  <div class="modal">
+    <h2>Mark as paid</h2>
+    <p style="font-size:13px;color:var(--muted)" id="iou-settle-info"></p>
+    <label>Amount received</label>
+    <input type="text" id="iou-settle-amount" inputmode="decimal" placeholder="0.00" autocomplete="off">
+    <label>Deposited into</label>
+    <select id="iou-settle-method"></select>
+    <label>Date</label>
+    <input type="date" id="iou-settle-date">
+    <label>Note (optional)</label>
+    <textarea id="iou-settle-note" placeholder="e.g. Paid via Gcash"></textarea>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="iou-settle-cancel">Cancel</button>
+      <button class="btn btn-primary" id="iou-settle-save">Save</button>
     </div>
   </div>
 </div>

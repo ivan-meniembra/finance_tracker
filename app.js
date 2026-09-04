@@ -167,7 +167,7 @@ function isoWeekInfo(date) {
 }
 
 /* ---------- Period navigation ---------- */
-let currentPeriodType = 'month'; // day | week | month | year
+let currentPeriodType = 'day'; // day | week | month | year
 let currentAnchor = new Date(); // date representing current period
 
 function periodRange(type, anchor) {
@@ -229,7 +229,12 @@ function setActiveFilter(next) {
   renderHome();
 }
 
+let homeMode = 'normal'; // 'normal' | 'iou'
+
 function renderHome() {
+  updateIouBadge();
+  if (homeMode === 'iou') { renderIouView(); return; }
+
   document.getElementById('period-label').textContent = periodLabel(currentPeriodType, currentAnchor);
   const { start, end } = periodRange(currentPeriodType, currentAnchor);
   const txns = state.transactions.filter((t) => inRange(t.date, start, end));
@@ -237,11 +242,12 @@ function renderHome() {
   let income = 0, expense = 0;
   const byCat = {};
   for (const t of txns) {
-    if (t.type === 'transfer') continue;
+    if (t.type === 'transfer' || t.type === 'settlement') continue;
     if (t.type === 'income') income += t.amount;
     else {
-      expense += t.amount;
-      byCat[t.category] = (byCat[t.category] || 0) + t.amount;
+      const amt = t.split ? t.split.yourShare : t.amount;
+      expense += amt;
+      byCat[t.category] = (byCat[t.category] || 0) + amt;
     }
   }
   document.getElementById('sum-income').textContent = fmtMoney(income);
@@ -374,6 +380,142 @@ function isCategoryFilterActive() {
 
 document.getElementById('txn-filter-clear').addEventListener('click', () => {
   activeFilter = null;
+  renderHome();
+});
+
+document.querySelectorAll('#home-mode-toggle button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    homeMode = btn.dataset.homeMode;
+    document.querySelectorAll('#home-mode-toggle button').forEach((b) => b.classList.toggle('active', b === btn));
+    document.getElementById('home-normal-view').style.display = homeMode === 'normal' ? '' : 'none';
+    document.getElementById('home-iou-view').style.display = homeMode === 'iou' ? '' : 'none';
+    renderHome();
+  });
+});
+
+/* ---------- IOUs / receivables (Splitwise-style) ---------- */
+function allIouEntries() {
+  const entries = [];
+  for (const t of state.transactions) {
+    if (t.type !== 'expense' || !t.split) continue;
+    for (const owed of t.split.owedBy) {
+      const settledSoFar = state.transactions
+        .filter((s) => s.type === 'settlement' && s.relatedTxnId === t.id && s.person === owed.name)
+        .reduce((sum, s) => sum + s.amount, 0);
+      const remaining = Math.round((owed.amount - settledSoFar) * 100) / 100;
+      entries.push({ txnId: t.id, date: t.date, category: t.category, note: t.note, name: owed.name, owedAmount: owed.amount, settledSoFar, remaining });
+    }
+  }
+  return entries;
+}
+
+function updateIouBadge() {
+  const openCount = allIouEntries().filter((e) => e.remaining > 0.004).length;
+  document.getElementById('badge-iou').textContent = openCount > 0 ? openCount : '';
+}
+
+function renderIouChart(byPerson) {
+  const svg = document.getElementById('iou-chart-svg');
+  const legend = document.getElementById('iou-chart-legend');
+  svg.innerHTML = '';
+  legend.innerHTML = '';
+  const entries = Object.entries(byPerson).sort((a, b) => b[1] - a[1]);
+  svg.setAttribute('viewBox', '0 0 320 160');
+  if (!entries.length) {
+    const t = svgEl('text', { x: 160, y: 80, 'text-anchor': 'middle', fill: '#94a3b8', 'font-size': 12 });
+    t.textContent = 'No one owes you anything';
+    svg.appendChild(t);
+    return;
+  }
+  const maxVal = Math.max(...entries.map((e) => e[1]));
+  const barW = 320 / entries.length;
+  entries.forEach(([name, val], i) => {
+    const h = (val / maxVal) * 120;
+    svg.appendChild(svgEl('rect', {
+      x: i * barW + barW * 0.15, y: 150 - h, width: barW * 0.7, height: h,
+      rx: 3, fill: CHART_COLORS[i % CHART_COLORS.length],
+    }));
+    const valText = svgEl('text', { x: i * barW + barW / 2, y: 150 - h - 6, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 10, 'font-weight': 700 });
+    valText.textContent = fmtMoney(val);
+    svg.appendChild(valText);
+
+    const li = document.createElement('div');
+    li.className = 'legend-item';
+    li.innerHTML = `<span class="legend-swatch" style="background:${CHART_COLORS[i % CHART_COLORS.length]}"></span>${escapeHtml(name)} (${fmtMoney(val)})`;
+    legend.appendChild(li);
+  });
+}
+
+function renderIouView() {
+  const entries = allIouEntries();
+  const open = entries.filter((e) => e.remaining > 0.004);
+  const totalOwed = open.reduce((s, e) => s + e.remaining, 0);
+  document.getElementById('iou-total').textContent = fmtMoney(totalOwed);
+
+  const byPerson = {};
+  for (const e of open) byPerson[e.name] = (byPerson[e.name] || 0) + e.remaining;
+  renderIouChart(byPerson);
+
+  const list = document.getElementById('iou-list');
+  const empty = document.getElementById('iou-empty');
+  const sorted = [...open].sort((a, b) => (a.date < b.date ? 1 : -1));
+  list.innerHTML = sorted.map((e) => `
+    <li class="txn-item" data-txn-id="${e.txnId}" data-person="${escapeHtml(e.name)}" style="cursor:default">
+      <div class="txn-main">
+        <div class="txn-cat">${escapeHtml(e.name)} — ${escapeHtml(e.category)}</div>
+        <div class="txn-meta">${parseDate(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}${e.note ? ' · ' + escapeHtml(e.note) : ''}${e.settledSoFar > 0 ? ` · ${fmtMoney(e.settledSoFar)} already paid` : ''}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="txn-amt income">${fmtMoney(e.remaining)}</div>
+        <button type="button" class="btn btn-secondary iou-mark-paid" style="padding:6px 10px;font-size:12px">Mark paid</button>
+      </div>
+    </li>`).join('');
+  empty.style.display = sorted.length ? 'none' : 'block';
+  list.querySelectorAll('.iou-mark-paid').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const li = btn.closest('.txn-item');
+      openIouSettleModal(li.dataset.txnId, li.dataset.person);
+    });
+  });
+}
+
+let iouSettleTxnId = null, iouSettlePerson = null;
+
+function openIouSettleModal(txnId, person) {
+  const entry = allIouEntries().find((e) => e.txnId === txnId && e.name === person);
+  if (!entry) return;
+  iouSettleTxnId = txnId;
+  iouSettlePerson = person;
+  document.getElementById('iou-settle-info').textContent =
+    `${person} owes ${fmtMoney(entry.remaining)} for ${entry.category} (${parseDate(entry.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+  document.getElementById('iou-settle-amount').value = entry.remaining;
+  document.getElementById('iou-settle-method').innerHTML = state.accounts.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+  document.getElementById('iou-settle-date').value = todayStr();
+  document.getElementById('iou-settle-note').value = '';
+  document.getElementById('iou-settle-modal-overlay').classList.add('active');
+}
+
+document.getElementById('iou-settle-cancel').addEventListener('click', () => {
+  document.getElementById('iou-settle-modal-overlay').classList.remove('active');
+});
+document.getElementById('iou-settle-modal-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'iou-settle-modal-overlay') document.getElementById('iou-settle-modal-overlay').classList.remove('active');
+});
+document.getElementById('iou-settle-save').addEventListener('click', () => {
+  const amount = Math.round((evalAmount(document.getElementById('iou-settle-amount').value) || 0) * 100) / 100;
+  if (!amount || amount <= 0) { toast('Enter a valid amount'); return; }
+  const method = document.getElementById('iou-settle-method').value;
+  const date = document.getElementById('iou-settle-date').value || todayStr();
+  const note = document.getElementById('iou-settle-note').value.trim();
+  const now = Date.now();
+  state.transactions.push({
+    id: uid(), type: 'settlement', amount, method, category: 'Repayment', date, note,
+    relatedTxnId: iouSettleTxnId, person: iouSettlePerson,
+    createdAt: now, updatedAt: now,
+  });
+  saveData();
+  toast('Marked as paid');
+  document.getElementById('iou-settle-modal-overlay').classList.remove('active');
   renderHome();
 });
 
@@ -534,7 +676,7 @@ function trendBuckets() {
   }
   for (const b of buckets) {
     const inBucket = state.transactions.filter((t) => inRange(t.date, b.start, b.end));
-    b.expense = inBucket.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    b.expense = inBucket.filter((t) => t.type === 'expense').reduce((s, t) => s + (t.split ? t.split.yourShare : t.amount), 0);
     b.income = inBucket.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
   }
   return buckets;
@@ -641,11 +783,24 @@ function txnRowHtml(t) {
       <div class="txn-amt">${fmtMoney(t.amount)}</div>
     </li>`;
   }
+  if (t.type === 'settlement') {
+    return `<li class="txn-item" data-id="${t.id}">
+      <div class="txn-main">
+        <div class="txn-cat">Repayment from ${escapeHtml(t.person)}</div>
+        <div class="txn-meta">${dateStr} · ${escapeHtml(t.method)}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
+      </div>
+      <div class="txn-amt income">+${fmtMoney(t.amount)}</div>
+    </li>`;
+  }
   const sign = t.type === 'income' ? '+' : '-';
+  const splitNote = t.split
+    ? `<div class="txn-meta" style="color:var(--accent)">Your share ${fmtMoney(t.split.yourShare)} · ${escapeHtml(t.split.owedBy.map((e) => e.name).join(', '))} owes ${fmtMoney(t.split.owedBy.reduce((s, e) => s + e.amount, 0))}</div>`
+    : '';
   return `<li class="txn-item" data-id="${t.id}">
     <div class="txn-main">
       <div class="txn-cat">${escapeHtml(t.category)}</div>
       <div class="txn-meta">${dateStr} · ${escapeHtml(t.method)}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
+      ${splitNote}
     </div>
     <div class="txn-amt ${t.type}">${sign}${fmtMoney(t.amount)}</div>
   </li>`;
@@ -680,7 +835,20 @@ function renderTxnList(txns, listId, emptyId) {
   list.innerHTML = sorted.map(txnRowHtml).join('');
   empty.style.display = sorted.length ? 'none' : 'block';
   list.querySelectorAll('.txn-item').forEach((el) => {
-    el.addEventListener('click', () => openTxnModal(el.dataset.id));
+    el.addEventListener('click', () => {
+      const t = state.transactions.find((x) => x.id === el.dataset.id);
+      if (t && t.type === 'settlement') {
+        if (confirm(`Delete this repayment record from ${t.person} (${fmtMoney(t.amount)})?`)) {
+          state.transactions = state.transactions.filter((x) => x.id !== t.id);
+          saveData();
+          toast('Repayment deleted');
+          renderHome();
+          if (activeTabView === 'audit') renderAudit();
+        }
+        return;
+      }
+      openTxnModal(el.dataset.id);
+    });
   });
 }
 
@@ -881,6 +1049,12 @@ function setModalType(type) {
     document.getElementById('txn-installment').checked = false;
     document.getElementById('installment-fields').style.display = 'none';
   }
+  document.getElementById('split-wrap').style.display = type === 'expense' && !editingId ? 'block' : 'none';
+  if (type !== 'expense' || editingId) {
+    document.getElementById('txn-split').checked = false;
+    document.getElementById('split-fields').style.display = 'none';
+    document.getElementById('split-owed-rows').innerHTML = '';
+  }
 }
 
 function installmentMonths() {
@@ -902,8 +1076,57 @@ function updateInstallmentPreview() {
 
 document.getElementById('txn-installment').addEventListener('change', (e) => {
   document.getElementById('installment-fields').style.display = e.target.checked ? 'block' : 'none';
+  if (e.target.checked) {
+    document.getElementById('txn-split').checked = false;
+    document.getElementById('split-fields').style.display = 'none';
+  }
   updateInstallmentPreview();
 });
+
+function addSplitRow(name, amount) {
+  const rows = document.getElementById('split-owed-rows');
+  const row = document.createElement('div');
+  row.className = 'split-row';
+  row.innerHTML = `
+    <input type="text" class="split-name" placeholder="Name" value="${escapeHtml(name || '')}">
+    <input type="text" class="split-amount" inputmode="decimal" placeholder="Amount" value="${amount || ''}">
+    <button type="button" class="split-remove">✕</button>
+  `;
+  row.querySelector('.split-remove').addEventListener('click', () => { row.remove(); updateSplitPreview(); });
+  row.querySelectorAll('input').forEach((inp) => inp.addEventListener('input', updateSplitPreview));
+  rows.appendChild(row);
+  updateSplitPreview();
+}
+
+function getSplitEntries() {
+  return [...document.querySelectorAll('#split-owed-rows .split-row')].map((row) => ({
+    name: row.querySelector('.split-name').value.trim(),
+    amount: Math.round((evalAmount(row.querySelector('.split-amount').value) || 0) * 100) / 100,
+  })).filter((e) => e.name && e.amount > 0);
+}
+
+function updateSplitPreview() {
+  const preview = document.getElementById('split-preview');
+  const total = evalAmount(document.getElementById('txn-amount').value) || 0;
+  const owedTotal = getSplitEntries().reduce((s, e) => s + e.amount, 0);
+  if (!total) { preview.textContent = ''; return; }
+  const yourShare = Math.round((total - owedTotal) * 100) / 100;
+  preview.textContent = owedTotal > total
+    ? 'Owed amounts exceed the total amount'
+    : `Your share: ${fmtMoney(yourShare)}`;
+}
+
+document.getElementById('txn-split').addEventListener('change', (e) => {
+  document.getElementById('split-fields').style.display = e.target.checked ? 'block' : 'none';
+  if (e.target.checked) {
+    document.getElementById('txn-installment').checked = false;
+    document.getElementById('installment-fields').style.display = 'none';
+    if (!document.querySelectorAll('#split-owed-rows .split-row').length) addSplitRow();
+  }
+  updateSplitPreview();
+});
+document.getElementById('split-add-person').addEventListener('click', () => addSplitRow());
+document.getElementById('txn-amount').addEventListener('input', updateSplitPreview);
 document.getElementById('installment-months').addEventListener('change', (e) => {
   document.getElementById('installment-months-custom').style.display = e.target.value === 'custom' ? 'block' : 'none';
   updateInstallmentPreview();
@@ -953,9 +1176,14 @@ function openTxnModal(id) {
     document.getElementById('installment-months-custom').style.display = 'none';
     document.getElementById('installment-interest').value = '';
     document.getElementById('installment-preview').textContent = '';
+    document.getElementById('txn-split').checked = false;
+    document.getElementById('split-fields').style.display = 'none';
+    document.getElementById('split-owed-rows').innerHTML = '';
+    document.getElementById('split-preview').textContent = '';
     delBtn.style.display = 'none';
   }
   overlay.classList.add('active');
+  requestAnimationFrame(() => document.getElementById('txn-amount').focus());
 }
 
 function closeTxnModal() {
@@ -1024,6 +1252,17 @@ document.getElementById('txn-save').addEventListener('click', () => {
       });
     }
     toast(`Added ${months}-month installment plan`);
+  } else if (modalType === 'expense' && document.getElementById('txn-split').checked) {
+    const owedBy = getSplitEntries();
+    const owedTotal = owedBy.reduce((s, e) => s + e.amount, 0);
+    if (!owedBy.length) { toast('Add at least one person who owes you'); return; }
+    if (owedTotal > amount) { toast('Owed amounts exceed the total amount'); return; }
+    const yourShare = Math.round((amount - owedTotal) * 100) / 100;
+    state.transactions.push({
+      id: uid(), type: 'expense', amount, category, method, date, note, createdAt: now, updatedAt: now,
+      split: { owedBy, yourShare },
+    });
+    toast('Split expense added');
   } else {
     state.transactions.push({ id: uid(), type: modalType, amount, category, method, date, note, createdAt: now, updatedAt: now });
     toast('Transaction added');
@@ -1064,7 +1303,7 @@ function applyAuditFilters() {
   const to = document.getElementById('audit-to').value;
 
   let results = state.transactions.filter((t) => {
-    if (q && !(t.category.toLowerCase().includes(q) || (t.note || '').toLowerCase().includes(q))) return false;
+    if (q && !((t.category || '').toLowerCase().includes(q) || (t.note || '').toLowerCase().includes(q))) return false;
     if (method && t.method !== method && t.toAccount !== method) return false;
     if (cat && t.category !== cat) return false;
     if (from && t.date < from) return false;
@@ -1077,7 +1316,7 @@ function applyAuditFilters() {
   let income = 0, expense = 0;
   for (const t of results) {
     if (t.type === 'income') income += t.amount;
-    else if (t.type === 'expense') expense += t.amount;
+    else if (t.type === 'expense') expense += (t.split ? t.split.yourShare : t.amount);
   }
   document.getElementById('audit-sum-income').textContent = fmtMoney(income);
   document.getElementById('audit-sum-expense').textContent = fmtMoney(expense);
@@ -1544,6 +1783,10 @@ function accountBalance(account, asOf) {
       continue;
     }
     if (t.method !== account.name) continue;
+    if (t.type === 'settlement') {
+      bal += account.kind === 'liability' ? -t.amount : t.amount; // money coming back to you
+      continue;
+    }
     if (account.kind === 'liability') {
       bal += t.type === 'expense' ? t.amount : -t.amount;
     } else {
@@ -2092,9 +2335,13 @@ document.getElementById('btn-ai-insight').addEventListener('click', async () => 
   let income = 0, expense = 0;
   const byCat = {};
   for (const t of txns) {
-    if (t.type === 'transfer') continue; // transfers between your own accounts aren't income or spending
+    if (t.type === 'transfer' || t.type === 'settlement') continue; // not real income or spending
     if (t.type === 'income') income += t.amount;
-    else { expense += t.amount; byCat[t.category] = (byCat[t.category] || 0) + t.amount; }
+    else {
+      const amt = t.split ? t.split.yourShare : t.amount;
+      expense += amt;
+      byCat[t.category] = (byCat[t.category] || 0) + amt;
+    }
   }
   const summary = {
     period: periodLabel(currentPeriodType, currentAnchor),

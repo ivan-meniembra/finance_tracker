@@ -365,6 +365,11 @@ input:focus, select:focus, textarea:focus {
 textarea { resize: vertical; min-height: 54px; }
 select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238b93a7' stroke-width='1.6' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
 
+.split-row { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+.split-row .split-name { flex: 1.4; margin: 0; }
+.split-row .split-amount { flex: 1; margin: 0; }
+.split-row .split-remove { flex: 0 0 auto; width: auto; padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); font-size: 14px; font-family: inherit; }
+
 .calc-row { display: flex; gap: 6px; margin-top: 8px; }
 .calc-row button {
   flex: 1;
