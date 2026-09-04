@@ -1054,6 +1054,10 @@ function setModalType(type) {
     document.getElementById('txn-split').checked = false;
     document.getElementById('split-fields').style.display = 'none';
     document.getElementById('split-owed-rows').innerHTML = '';
+    const yourShareInput = document.getElementById('split-your-share');
+    yourShareInput.value = '';
+    yourShareInput.dataset.touched = '';
+    yourShareInput.classList.add('is-default');
   }
 }
 
@@ -1087,14 +1091,61 @@ function addSplitRow(name, amount) {
   const rows = document.getElementById('split-owed-rows');
   const row = document.createElement('div');
   row.className = 'split-row';
+  const touched = amount != null && amount !== '';
+  if (touched) row.dataset.touched = '1';
   row.innerHTML = `
     <input type="text" class="split-name" placeholder="Name" value="${escapeHtml(name || '')}">
-    <input type="text" class="split-amount" inputmode="decimal" placeholder="Amount" value="${amount || ''}">
+    <input type="text" class="split-amount${touched ? '' : ' is-default'}" inputmode="decimal" placeholder="Amount" value="${amount != null ? amount : ''}">
     <button type="button" class="split-remove">✕</button>
   `;
-  row.querySelector('.split-remove').addEventListener('click', () => { row.remove(); updateSplitPreview(); });
-  row.querySelectorAll('input').forEach((inp) => inp.addEventListener('input', updateSplitPreview));
+  const amountInput = row.querySelector('.split-amount');
+  row.querySelector('.split-remove').addEventListener('click', () => {
+    row.remove();
+    updateYourShareDefault();
+    rebalanceOwedRows();
+  });
+  row.querySelector('.split-name').addEventListener('input', updateSplitPreview);
+  amountInput.addEventListener('input', () => {
+    const isNowTouched = amountInput.value.trim() !== '';
+    row.dataset.touched = isNowTouched ? '1' : '';
+    amountInput.classList.toggle('is-default', !isNowTouched);
+    rebalanceOwedRows();
+  });
   rows.appendChild(row);
+  updateYourShareDefault();
+  rebalanceOwedRows();
+}
+
+// "Your share" is the anchor: left untouched, it auto-fills with an even split (recomputed
+// only when the total amount or the number of people changes) but editing an "Owed by" row
+// never pushes it around. Once you type your own number into it, it's fixed until you clear
+// it. The "Owed by" rows are downstream of it — any of them you haven't manually typed an
+// amount into auto-fills with an even split of whatever's left after your share and any
+// manually-set owed amounts are subtracted out.
+function updateYourShareDefault() {
+  const yourInput = document.getElementById('split-your-share');
+  if (yourInput.dataset.touched === '1') return;
+  const total = evalAmount(document.getElementById('txn-amount').value) || 0;
+  const participants = document.querySelectorAll('#split-owed-rows .split-row').length + 1;
+  yourInput.value = Math.round((total / participants) * 100) / 100;
+}
+
+function rebalanceOwedRows() {
+  const total = evalAmount(document.getElementById('txn-amount').value) || 0;
+  const yourShare = evalAmount(document.getElementById('split-your-share').value) || 0;
+  const rows = [...document.querySelectorAll('#split-owed-rows .split-row')];
+  const touchedSum = rows
+    .filter((r) => r.dataset.touched === '1')
+    .reduce((s, r) => s + (evalAmount(r.querySelector('.split-amount').value) || 0), 0);
+  const untouched = rows.filter((r) => r.dataset.touched !== '1');
+  const remaining = Math.max(0, Math.round((total - yourShare - touchedSum) * 100) / 100);
+  const per = untouched.length ? remaining / untouched.length : 0;
+  untouched.forEach((r, i) => {
+    const isLast = i === untouched.length - 1;
+    const soFar = Math.round(per * i * 100) / 100;
+    const val = isLast ? Math.round((remaining - soFar) * 100) / 100 : Math.round(per * 100) / 100;
+    r.querySelector('.split-amount').value = val;
+  });
   updateSplitPreview();
 }
 
@@ -1108,13 +1159,30 @@ function getSplitEntries() {
 function updateSplitPreview() {
   const preview = document.getElementById('split-preview');
   const total = evalAmount(document.getElementById('txn-amount').value) || 0;
-  const owedTotal = getSplitEntries().reduce((s, e) => s + e.amount, 0);
   if (!total) { preview.textContent = ''; return; }
-  const yourShare = Math.round((total - owedTotal) * 100) / 100;
-  preview.textContent = owedTotal > total
-    ? 'Owed amounts exceed the total amount'
-    : `Your share: ${fmtMoney(yourShare)}`;
+  const yourShare = evalAmount(document.getElementById('split-your-share').value) || 0;
+  const owedTotal = [...document.querySelectorAll('#split-owed-rows .split-row')]
+    .reduce((s, r) => s + (evalAmount(r.querySelector('.split-amount').value) || 0), 0);
+  const diff = Math.round((total - yourShare - owedTotal) * 100) / 100;
+  if (diff > 0.01) {
+    preview.textContent = `⚠ ${fmtMoney(diff)} unassigned — add it to your share or someone's amount`;
+    preview.style.color = '#fbbf24';
+  } else if (diff < -0.01) {
+    preview.textContent = `⚠ Amounts exceed the total by ${fmtMoney(-diff)}`;
+    preview.style.color = 'var(--expense)';
+  } else {
+    preview.textContent = `Your share: ${fmtMoney(yourShare)}`;
+    preview.style.color = 'var(--muted)';
+  }
 }
+
+document.getElementById('split-your-share').addEventListener('input', (e) => {
+  const touched = e.target.value.trim() !== '';
+  e.target.dataset.touched = touched ? '1' : '';
+  e.target.classList.toggle('is-default', !touched);
+  if (!touched) updateYourShareDefault();
+  rebalanceOwedRows();
+});
 
 document.getElementById('txn-split').addEventListener('change', (e) => {
   document.getElementById('split-fields').style.display = e.target.checked ? 'block' : 'none';
@@ -1122,11 +1190,14 @@ document.getElementById('txn-split').addEventListener('change', (e) => {
     document.getElementById('txn-installment').checked = false;
     document.getElementById('installment-fields').style.display = 'none';
     if (!document.querySelectorAll('#split-owed-rows .split-row').length) addSplitRow();
+    else { updateYourShareDefault(); rebalanceOwedRows(); }
   }
   updateSplitPreview();
 });
 document.getElementById('split-add-person').addEventListener('click', () => addSplitRow());
-document.getElementById('txn-amount').addEventListener('input', updateSplitPreview);
+document.getElementById('txn-amount').addEventListener('input', () => {
+  if (document.getElementById('txn-split').checked) { updateYourShareDefault(); rebalanceOwedRows(); }
+});
 document.getElementById('installment-months').addEventListener('change', (e) => {
   document.getElementById('installment-months-custom').style.display = e.target.value === 'custom' ? 'block' : 'none';
   updateInstallmentPreview();
@@ -1180,10 +1251,16 @@ function openTxnModal(id) {
     document.getElementById('split-fields').style.display = 'none';
     document.getElementById('split-owed-rows').innerHTML = '';
     document.getElementById('split-preview').textContent = '';
+    const yourShareInput = document.getElementById('split-your-share');
+    yourShareInput.value = '';
+    yourShareInput.dataset.touched = '';
+    yourShareInput.classList.add('is-default');
     delBtn.style.display = 'none';
   }
   overlay.classList.add('active');
-  requestAnimationFrame(() => document.getElementById('txn-amount').focus());
+  // Must focus synchronously within the click handler (no rAF/setTimeout) — iOS Safari only
+  // pops the on-screen keyboard when .focus() runs inside the original user-gesture call stack.
+  document.getElementById('txn-amount').focus();
 }
 
 function closeTxnModal() {
@@ -1254,10 +1331,10 @@ document.getElementById('txn-save').addEventListener('click', () => {
     toast(`Added ${months}-month installment plan`);
   } else if (modalType === 'expense' && document.getElementById('txn-split').checked) {
     const owedBy = getSplitEntries();
+    const yourShare = Math.round((evalAmount(document.getElementById('split-your-share').value) || 0) * 100) / 100;
     const owedTotal = owedBy.reduce((s, e) => s + e.amount, 0);
     if (!owedBy.length) { toast('Add at least one person who owes you'); return; }
-    if (owedTotal > amount) { toast('Owed amounts exceed the total amount'); return; }
-    const yourShare = Math.round((amount - owedTotal) * 100) / 100;
+    if (Math.abs(owedTotal + yourShare - amount) > 0.01) { toast("Amounts don't add up to the total — adjust and try again"); return; }
     state.transactions.push({
       id: uid(), type: 'expense', amount, category, method, date, note, createdAt: now, updatedAt: now,
       split: { owedBy, yourShare },
