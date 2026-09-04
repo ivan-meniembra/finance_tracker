@@ -1473,6 +1473,49 @@ function checkAndNotifyDueBills(force) {
   }
 }
 
+// In-app popup reminder for bills due today or overdue — works even without OS notification
+// permission, since it's just a modal shown when the app is opened (once per day).
+function billsDueTodayOrOverdue(today) {
+  return state.bills.filter((b) => b.status !== 'paid' && b.dueDate <= today);
+}
+
+function checkBillReminderPopup() {
+  const today = todayStr();
+  if (localStorage.getItem('fintrack_last_bill_popup') === today) return;
+  localStorage.setItem('fintrack_last_bill_popup', today);
+  const due = billsDueTodayOrOverdue(today);
+  if (!due.length) return;
+  showBillReminderModal(due, today);
+}
+
+function showBillReminderModal(bills, today) {
+  const list = document.getElementById('bill-reminder-list');
+  list.innerHTML = bills.map((b) => {
+    const overdue = b.dueDate < today;
+    return `<li class="txn-item" style="cursor:default">
+      <div class="txn-main">
+        <div class="txn-cat">${escapeHtml(b.name)}</div>
+        <div class="txn-meta" style="${overdue ? 'color:var(--expense)' : ''}">${overdue ? 'Overdue since ' + b.dueDate : 'Due today'}</div>
+      </div>
+      <div class="txn-amt expense">${fmtMoney(b.amount)}</div>
+    </li>`;
+  }).join('');
+  const total = bills.reduce((s, b) => s + b.amount, 0);
+  document.getElementById('bill-reminder-summary').textContent = `${bills.length} bill${bills.length > 1 ? 's' : ''} — total ${fmtMoney(total)}`;
+  document.getElementById('bill-reminder-overlay').classList.add('active');
+}
+
+document.getElementById('bill-reminder-dismiss').addEventListener('click', () => {
+  document.getElementById('bill-reminder-overlay').classList.remove('active');
+});
+document.getElementById('bill-reminder-view').addEventListener('click', () => {
+  document.getElementById('bill-reminder-overlay').classList.remove('active');
+  switchView('bills');
+});
+document.getElementById('bill-reminder-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'bill-reminder-overlay') document.getElementById('bill-reminder-overlay').classList.remove('active');
+});
+
 function removeBillName(val) {
   const inUse = state.bills.some((b) => b.name === val);
   if (inUse && !confirm(`"${val}" is used by existing bills. Remove it from the list anyway? Existing bills keep this name.`)) return;
@@ -2507,3 +2550,4 @@ document.getElementById('txn-date').value = todayStr();
 accrueAllInterest();
 renderHome();
 checkAndNotifyDueBills(false);
+checkBillReminderPopup();
