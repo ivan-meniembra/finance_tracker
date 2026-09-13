@@ -18,6 +18,7 @@ const DEFAULT_DATA = {
   ],
   bills: [], // {id, name, amount, dueDate: 'YYYY-MM-DD', recurring: 'none'|'weekly'|'monthly'|'yearly', status: 'pending'|'paid', note, createdAt}
   billNames: ['Electricity', 'Water', 'Internet', 'Rent', 'Credit Card'],
+  iouPeople: [], // names remembered from IOU splits, most-recently-used first
   geminiKey: '',
   budgets: { overall: null, categories: {} }, // monthly budgets; categories: {catName: number}
 };
@@ -46,6 +47,7 @@ function loadData() {
       accounts,
       bills: parsed.bills || [],
       billNames: parsed.billNames || DEFAULT_DATA.billNames,
+      iouPeople: parsed.iouPeople || [],
       geminiKey: parsed.geminiKey || parsed.openaiKey || '',
       budgets: parsed.budgets || { overall: null, categories: {} },
     };
@@ -384,6 +386,10 @@ document.getElementById('txn-filter-clear').addEventListener('click', () => {
   activeFilter = null;
   renderHome();
 });
+document.getElementById('iou-filter-clear').addEventListener('click', () => {
+  iouActiveFilter = null;
+  renderIouView();
+});
 
 document.querySelectorAll('#home-mode-toggle button').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -416,6 +422,16 @@ function updateIouBadge() {
   document.getElementById('badge-iou').textContent = openCount > 0 ? openCount : '';
 }
 
+// Which person's IOUs the list is filtered to, set by clicking the by-person chart —
+// mirrors the Home tab's activeFilter/setActiveFilter pattern (single-focus, click again
+// to clear).
+let iouActiveFilter = null;
+
+function setIouFilter(name) {
+  iouActiveFilter = iouActiveFilter === name ? null : name;
+  renderIouView();
+}
+
 function renderIouChart(byPerson) {
   const svg = document.getElementById('iou-chart-svg');
   const legend = document.getElementById('iou-chart-legend');
@@ -431,19 +447,29 @@ function renderIouChart(byPerson) {
   }
   const maxVal = Math.max(...entries.map((e) => e[1]));
   const barW = 320 / entries.length;
+  const filterActive = iouActiveFilter != null;
   entries.forEach(([name, val], i) => {
+    const isSelected = iouActiveFilter === name;
     const h = (val / maxVal) * 120;
-    svg.appendChild(svgEl('rect', {
+    const rect = svgEl('rect', {
       x: i * barW + barW * 0.15, y: 150 - h, width: barW * 0.7, height: h,
       rx: 3, fill: CHART_COLORS[i % CHART_COLORS.length],
-    }));
+    });
+    rect.classList.add('chart-seg');
+    if (filterActive && !isSelected) rect.classList.add('dim');
+    if (isSelected) { rect.setAttribute('stroke', '#fff'); rect.setAttribute('stroke-width', '2'); }
+    rect.addEventListener('click', () => setIouFilter(name));
+    svg.appendChild(rect);
+
     const valText = svgEl('text', { x: i * barW + barW / 2, y: 150 - h - 6, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 10, 'font-weight': 700 });
     valText.textContent = fmtMoney(val);
+    if (filterActive && !isSelected) valText.setAttribute('opacity', '0.4');
     svg.appendChild(valText);
 
     const li = document.createElement('div');
-    li.className = 'legend-item';
+    li.className = 'legend-item' + (isSelected ? ' selected' : '') + (filterActive && !isSelected ? ' dim' : '');
     li.innerHTML = `<span class="legend-swatch" style="background:${CHART_COLORS[i % CHART_COLORS.length]}"></span>${escapeHtml(name)} (${fmtMoney(val)})`;
+    li.addEventListener('click', () => setIouFilter(name));
     legend.appendChild(li);
   });
 }
@@ -456,11 +482,16 @@ function renderIouView() {
 
   const byPerson = {};
   for (const e of open) byPerson[e.name] = (byPerson[e.name] || 0) + e.remaining;
+  if (iouActiveFilter && !byPerson[iouActiveFilter]) iouActiveFilter = null;
   renderIouChart(byPerson);
+
+  const filtered = iouActiveFilter ? open.filter((e) => e.name === iouActiveFilter) : open;
+  document.getElementById('iou-list-title').textContent = iouActiveFilter ? `Open IOUs — ${iouActiveFilter}` : 'Open IOUs';
+  document.getElementById('iou-filter-clear').style.display = iouActiveFilter ? 'block' : 'none';
 
   const list = document.getElementById('iou-list');
   const empty = document.getElementById('iou-empty');
-  const sorted = [...open].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const sorted = [...filtered].sort((a, b) => (a.date < b.date ? 1 : -1));
   list.innerHTML = sorted.map((e) => `
     <li class="txn-item" data-txn-id="${e.txnId}" data-person="${escapeHtml(e.name)}" style="cursor:default">
       <div class="txn-main">
@@ -481,19 +512,43 @@ function renderIouView() {
   });
 }
 
-let iouSettleTxnId = null, iouSettlePerson = null;
+let iouSettleTxnId = null, iouSettlePerson = null, editingSettlementId = null;
+
+function populateIouSettleMethodSelect() {
+  document.getElementById('iou-settle-method').innerHTML = state.accounts.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+}
 
 function openIouSettleModal(txnId, person) {
   const entry = allIouEntries().find((e) => e.txnId === txnId && e.name === person);
   if (!entry) return;
+  editingSettlementId = null;
   iouSettleTxnId = txnId;
   iouSettlePerson = person;
   document.getElementById('iou-settle-info').textContent =
     `${person} owes ${fmtMoney(entry.remaining)} for ${entry.category} (${parseDate(entry.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
   document.getElementById('iou-settle-amount').value = entry.remaining;
-  document.getElementById('iou-settle-method').innerHTML = state.accounts.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+  populateIouSettleMethodSelect();
   document.getElementById('iou-settle-date').value = todayStr();
   document.getElementById('iou-settle-note').value = '';
+  document.getElementById('iou-settle-delete').style.display = 'none';
+  document.getElementById('iou-settle-modal-overlay').classList.add('active');
+}
+
+// Opens the same modal to edit (or delete) an existing repayment — e.g. you picked the
+// wrong account or typo'd the amount when marking something paid.
+function openIouSettleEditModal(settlementId) {
+  const t = state.transactions.find((x) => x.id === settlementId && x.type === 'settlement');
+  if (!t) return;
+  editingSettlementId = settlementId;
+  iouSettleTxnId = t.relatedTxnId;
+  iouSettlePerson = t.person;
+  document.getElementById('iou-settle-info').textContent = `Editing repayment from ${t.person}`;
+  document.getElementById('iou-settle-amount').value = t.amount;
+  populateIouSettleMethodSelect();
+  document.getElementById('iou-settle-method').value = t.method;
+  document.getElementById('iou-settle-date').value = t.date;
+  document.getElementById('iou-settle-note').value = t.note || '';
+  document.getElementById('iou-settle-delete').style.display = 'block';
   document.getElementById('iou-settle-modal-overlay').classList.add('active');
 }
 
@@ -510,15 +565,31 @@ document.getElementById('iou-settle-save').addEventListener('click', () => {
   const date = document.getElementById('iou-settle-date').value || todayStr();
   const note = document.getElementById('iou-settle-note').value.trim();
   const now = Date.now();
-  state.transactions.push({
-    id: uid(), type: 'settlement', amount, method, category: 'Repayment', date, note,
-    relatedTxnId: iouSettleTxnId, person: iouSettlePerson,
-    createdAt: now, updatedAt: now,
-  });
+  if (editingSettlementId) {
+    const t = state.transactions.find((x) => x.id === editingSettlementId);
+    Object.assign(t, { amount, method, date, note, updatedAt: now });
+    toast('Repayment updated');
+  } else {
+    state.transactions.push({
+      id: uid(), type: 'settlement', amount, method, category: 'Repayment', date, note,
+      relatedTxnId: iouSettleTxnId, person: iouSettlePerson,
+      createdAt: now, updatedAt: now,
+    });
+    toast('Marked as paid');
+  }
   saveData();
-  toast('Marked as paid');
   document.getElementById('iou-settle-modal-overlay').classList.remove('active');
   renderHome();
+  if (activeTabView === 'audit') renderAudit();
+});
+document.getElementById('iou-settle-delete').addEventListener('click', () => {
+  if (!editingSettlementId) return;
+  state.transactions = state.transactions.filter((x) => x.id !== editingSettlementId);
+  saveData();
+  toast('Repayment deleted');
+  document.getElementById('iou-settle-modal-overlay').classList.remove('active');
+  renderHome();
+  if (activeTabView === 'audit') renderAudit();
 });
 
 function renderChart(byCat, total) {
@@ -776,8 +847,11 @@ document.querySelectorAll('#chart-type-toggle button').forEach((btn) => {
 function txnRowHtml(t) {
   const d = parseDate(t.date);
   const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  // Drag-to-reorder only makes sense in Date sort mode (Amount mode already dictates the order).
+  const dragHandle = txnSortMode === 'date' ? '<span class="drag-handle" title="Drag to reorder">⠿</span>' : '';
   if (t.type === 'transfer') {
-    return `<li class="txn-item" data-id="${t.id}">
+    return `<li class="txn-item" data-id="${t.id}" data-date="${t.date}">
+      ${dragHandle}
       <div class="txn-main">
         <div class="txn-cat">Transfer: ${escapeHtml(t.method)} → ${escapeHtml(t.toAccount)}</div>
         <div class="txn-meta">${dateStr}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
@@ -786,7 +860,8 @@ function txnRowHtml(t) {
     </li>`;
   }
   if (t.type === 'settlement') {
-    return `<li class="txn-item" data-id="${t.id}">
+    return `<li class="txn-item" data-id="${t.id}" data-date="${t.date}">
+      ${dragHandle}
       <div class="txn-main">
         <div class="txn-cat">Repayment from ${escapeHtml(t.person)}</div>
         <div class="txn-meta">${dateStr} · ${escapeHtml(t.method)}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
@@ -798,7 +873,8 @@ function txnRowHtml(t) {
   const splitNote = t.split
     ? `<div class="txn-meta" style="color:var(--accent)">Your share ${fmtMoney(t.split.yourShare)} · ${escapeHtml(t.split.owedBy.map((e) => e.name).join(', '))} owes ${fmtMoney(t.split.owedBy.reduce((s, e) => s + e.amount, 0))}</div>`
     : '';
-  return `<li class="txn-item" data-id="${t.id}">
+  return `<li class="txn-item" data-id="${t.id}" data-date="${t.date}">
+    ${dragHandle}
     <div class="txn-main">
       <div class="txn-cat">${escapeHtml(t.category)}</div>
       <div class="txn-meta">${dateStr} · ${escapeHtml(t.method)}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
@@ -832,7 +908,13 @@ function renderTxnList(txns, listId, emptyId) {
   const empty = document.getElementById(emptyId);
   const sorted = [...txns].sort((a, b) => {
     if (txnSortMode === 'amount') return b.amount - a.amount;
-    return a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0);
+    if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+    // Same date: a manual drag-order wins if either side has one (undragged items sink to
+    // the bottom of the group); otherwise fall back to the original newest-logged-first order.
+    if (a.orderIndex != null || b.orderIndex != null) {
+      return (a.orderIndex ?? Infinity) - (b.orderIndex ?? Infinity);
+    }
+    return (b.createdAt || 0) - (a.createdAt || 0);
   });
   list.innerHTML = sorted.map(txnRowHtml).join('');
   empty.style.display = sorted.length ? 'none' : 'block';
@@ -840,18 +922,72 @@ function renderTxnList(txns, listId, emptyId) {
     el.addEventListener('click', () => {
       const t = state.transactions.find((x) => x.id === el.dataset.id);
       if (t && t.type === 'settlement') {
-        if (confirm(`Delete this repayment record from ${t.person} (${fmtMoney(t.amount)})?`)) {
-          state.transactions = state.transactions.filter((x) => x.id !== t.id);
-          saveData();
-          toast('Repayment deleted');
-          renderHome();
-          if (activeTabView === 'audit') renderAudit();
-        }
+        openIouSettleEditModal(t.id);
         return;
       }
       openTxnModal(el.dataset.id);
     });
   });
+  if (txnSortMode === 'date') attachDragHandles(list);
+}
+
+/* ---------- Drag-to-reorder same-day transactions (Date sort mode only) ---------- */
+let dragState = null;
+
+function attachDragHandles(list) {
+  list.querySelectorAll('.drag-handle').forEach((handle) => {
+    handle.addEventListener('click', (e) => e.stopPropagation());
+    handle.addEventListener('pointerdown', (e) => startDrag(e, handle.closest('.txn-item'), list));
+  });
+}
+
+function startDrag(e, li, list) {
+  e.preventDefault();
+  e.stopPropagation();
+  li.setPointerCapture(e.pointerId);
+  dragState = { li, list, startY: e.clientY, date: li.dataset.date, pointerId: e.pointerId };
+  li.classList.add('dragging');
+  document.addEventListener('pointermove', onDragMove);
+  document.addEventListener('pointerup', onDragEnd, { once: true });
+}
+
+function onDragMove(e) {
+  if (!dragState) return;
+  const { li, list, date } = dragState;
+  const dy = e.clientY - dragState.startY;
+  li.style.transform = `translateY(${dy}px)`;
+  const siblings = [...list.querySelectorAll('.txn-item')];
+  const idx = siblings.indexOf(li);
+  const rect = li.getBoundingClientRect();
+  const midY = rect.top + rect.height / 2;
+  const next = siblings[idx + 1];
+  if (next && next.dataset.date === date && midY > next.getBoundingClientRect().top + next.getBoundingClientRect().height / 2) {
+    list.insertBefore(next, li);
+    dragState.startY = e.clientY;
+    li.style.transform = '';
+    return;
+  }
+  const prev = siblings[idx - 1];
+  if (prev && prev.dataset.date === date && midY < prev.getBoundingClientRect().top + prev.getBoundingClientRect().height / 2) {
+    list.insertBefore(li, prev);
+    dragState.startY = e.clientY;
+    li.style.transform = '';
+  }
+}
+
+function onDragEnd() {
+  if (!dragState) return;
+  const { li, list, date } = dragState;
+  li.classList.remove('dragging');
+  li.style.transform = '';
+  document.removeEventListener('pointermove', onDragMove);
+  const groupRows = [...list.querySelectorAll('.txn-item')].filter((el) => el.dataset.date === date);
+  groupRows.forEach((el, i) => {
+    const t = state.transactions.find((x) => x.id === el.dataset.id);
+    if (t) t.orderIndex = i;
+  });
+  saveData();
+  dragState = null;
 }
 
 /* ---------- Navigation ---------- */
@@ -1089,6 +1225,45 @@ document.getElementById('txn-installment').addEventListener('change', (e) => {
   updateInstallmentPreview();
 });
 
+// Names remembered from past splits, so typos never fork one person into two. Matching is
+// always case-insensitive; whichever casing was remembered first "wins" and gets reused.
+function canonicalIouPersonName(name) {
+  const trimmed = name.trim();
+  if (!trimmed) return '';
+  const match = state.iouPeople.find((n) => n.toLowerCase() === trimmed.toLowerCase());
+  return match || trimmed;
+}
+
+function rememberIouPerson(name) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const idx = state.iouPeople.findIndex((n) => n.toLowerCase() === trimmed.toLowerCase());
+  if (idx !== -1) state.iouPeople.splice(idx, 1);
+  state.iouPeople.unshift(trimmed); // most-recently-used first
+}
+
+function renderIouNameSuggestions() {
+  const box = document.getElementById('iou-name-suggestions');
+  if (!state.iouPeople.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'flex';
+  box.innerHTML = state.iouPeople.slice(0, 10).map((n, i) =>
+    `<button type="button" class="name-chip" data-idx="${i}">${escapeHtml(n)}</button>`).join('');
+  box.querySelectorAll('.name-chip').forEach((btn) => {
+    btn.addEventListener('click', () => pickIouPersonSuggestion(state.iouPeople[parseInt(btn.dataset.idx, 10)]));
+  });
+}
+
+function pickIouPersonSuggestion(name) {
+  const rows = [...document.querySelectorAll('#split-owed-rows .split-row')];
+  let targetRow = rows.find((r) => r.querySelector('.split-name').value.trim() === '');
+  if (!targetRow) {
+    addSplitRow();
+    targetRow = document.querySelector('#split-owed-rows .split-row:last-child');
+  }
+  targetRow.querySelector('.split-name').value = name;
+  updateSplitPreview();
+}
+
 function addSplitRow(name, amount) {
   const rows = document.getElementById('split-owed-rows');
   const row = document.createElement('div');
@@ -1101,17 +1276,29 @@ function addSplitRow(name, amount) {
     <button type="button" class="split-remove">✕</button>
   `;
   const amountInput = row.querySelector('.split-amount');
+  const nameInput = row.querySelector('.split-name');
   row.querySelector('.split-remove').addEventListener('click', () => {
     row.remove();
     updateYourShareDefault();
     rebalanceOwedRows();
   });
-  row.querySelector('.split-name').addEventListener('input', updateSplitPreview);
+  nameInput.addEventListener('input', updateSplitPreview);
+  nameInput.addEventListener('blur', () => {
+    if (nameInput.value.trim()) nameInput.value = canonicalIouPersonName(nameInput.value);
+  });
+  // Same "stay touched while typing" fix as the your-share field — otherwise clearing this
+  // field to type a fresh number gets immediately overwritten by the auto-computed default.
   amountInput.addEventListener('input', () => {
-    const isNowTouched = amountInput.value.trim() !== '';
-    row.dataset.touched = isNowTouched ? '1' : '';
-    amountInput.classList.toggle('is-default', !isNowTouched);
+    row.dataset.touched = '1';
+    amountInput.classList.remove('is-default');
     rebalanceOwedRows();
+  });
+  amountInput.addEventListener('blur', () => {
+    if (amountInput.value.trim() === '') {
+      row.dataset.touched = '';
+      amountInput.classList.add('is-default');
+      rebalanceOwedRows();
+    }
   });
   rows.appendChild(row);
   updateYourShareDefault();
@@ -1153,7 +1340,7 @@ function rebalanceOwedRows() {
 
 function getSplitEntries() {
   return [...document.querySelectorAll('#split-owed-rows .split-row')].map((row) => ({
-    name: row.querySelector('.split-name').value.trim(),
+    name: canonicalIouPersonName(row.querySelector('.split-name').value),
     amount: Math.round((evalAmount(row.querySelector('.split-amount').value) || 0) * 100) / 100,
   })).filter((e) => e.name && e.amount > 0);
 }
@@ -1178,12 +1365,21 @@ function updateSplitPreview() {
   }
 }
 
+// Stays "touched" while actively being typed into — even through a momentarily-empty state
+// while you're clearing it to type a new number — so it doesn't snap back to the computed
+// default until you actually finish editing (blur) and leave it empty.
 document.getElementById('split-your-share').addEventListener('input', (e) => {
-  const touched = e.target.value.trim() !== '';
-  e.target.dataset.touched = touched ? '1' : '';
-  e.target.classList.toggle('is-default', !touched);
-  if (!touched) updateYourShareDefault();
+  e.target.dataset.touched = '1';
+  e.target.classList.remove('is-default');
   rebalanceOwedRows();
+});
+document.getElementById('split-your-share').addEventListener('blur', (e) => {
+  if (e.target.value.trim() === '') {
+    e.target.dataset.touched = '';
+    e.target.classList.add('is-default');
+    updateYourShareDefault();
+    rebalanceOwedRows();
+  }
 });
 
 document.getElementById('txn-split').addEventListener('change', (e) => {
@@ -1191,6 +1387,7 @@ document.getElementById('txn-split').addEventListener('change', (e) => {
   if (e.target.checked) {
     document.getElementById('txn-installment').checked = false;
     document.getElementById('installment-fields').style.display = 'none';
+    renderIouNameSuggestions();
     if (!document.querySelectorAll('#split-owed-rows .split-row').length) addSplitRow();
     else { updateYourShareDefault(); rebalanceOwedRows(); }
   }
@@ -1208,9 +1405,11 @@ document.getElementById('installment-months').addEventListener('change', (e) => 
   document.getElementById(id).addEventListener('input', updateInstallmentPreview);
 });
 
-document.getElementById('type-expense').addEventListener('click', () => setModalType('expense'));
-document.getElementById('type-income').addEventListener('click', () => setModalType('income'));
-document.getElementById('type-transfer').addEventListener('click', () => setModalType('transfer'));
+// Focus must happen synchronously in the click handler (see the note on openTxnModal) so
+// switching type tabs pops the iOS keyboard back up on the amount field, same as first open.
+document.getElementById('type-expense').addEventListener('click', () => { setModalType('expense'); document.getElementById('txn-amount').focus(); });
+document.getElementById('type-income').addEventListener('click', () => { setModalType('income'); document.getElementById('txn-amount').focus(); });
+document.getElementById('type-transfer').addEventListener('click', () => { setModalType('transfer'); document.getElementById('txn-amount').focus(); });
 
 function openTxnModal(id) {
   editingId = id || null;
@@ -1341,6 +1540,7 @@ document.getElementById('txn-save').addEventListener('click', () => {
       id: uid(), type: 'expense', amount, category, method, date, note, createdAt: now, updatedAt: now,
       split: { owedBy, yourShare },
     });
+    owedBy.forEach((e) => rememberIouPerson(e.name));
     toast('Split expense added');
   } else {
     state.transactions.push({ id: uid(), type: modalType, amount, category, method, date, note, createdAt: now, updatedAt: now });
@@ -1418,7 +1618,14 @@ function renderSettings() {
   document.getElementById('gemini-key').value = state.geminiKey || '';
   renderBudgetSettings();
   renderChipList('bill-name-list', state.billNames, removeBillName);
+  renderChipList('iou-people-list', state.iouPeople, removeIouPerson);
   renderNotificationStatus();
+}
+
+function removeIouPerson(val) {
+  state.iouPeople = state.iouPeople.filter((n) => n !== val);
+  saveData();
+  renderSettings();
 }
 
 /* ---------- Bill reminders (foreground-only local notifications) ---------- */
@@ -1643,7 +1850,7 @@ document.getElementById('btn-export-csv').addEventListener('click', exportCsv);
 
 /* ---------- JSON backup / restore ---------- */
 document.getElementById('btn-backup-json').addEventListener('click', () => {
-  downloadFile(JSON.stringify(state, null, 2), `finance-tracker-backup-${todayStr()}.json`, 'application/json');
+  downloadFile(JSON.stringify(state, null, 2), `${todayStr()}.json`, 'application/json');
   toast('Backup downloaded');
 });
 
@@ -1663,6 +1870,7 @@ document.getElementById('restore-file').addEventListener('change', (e) => {
           accounts: parsed.accounts || DEFAULT_DATA.accounts,
           bills: parsed.bills || [],
           billNames: parsed.billNames || DEFAULT_DATA.billNames,
+          iouPeople: parsed.iouPeople || [],
           geminiKey: parsed.geminiKey || parsed.openaiKey || '',
           budgets: parsed.budgets || { overall: null, categories: {} },
         };

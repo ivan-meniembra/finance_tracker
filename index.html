@@ -106,7 +106,10 @@
         <div class="legend" id="iou-chart-legend"></div>
       </div>
       <div class="card">
-        <h3 class="section-title" style="margin-top:0">Open IOUs</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3 class="section-title" style="margin-top:0" id="iou-list-title">Open IOUs</h3>
+          <button id="iou-filter-clear" style="display:none;background:none;border:none;color:var(--accent);font-size:12px;font-weight:600;font-family:inherit;padding:4px 0">✕ Clear filter</button>
+        </div>
         <ul class="txn-list" id="iou-list"></ul>
         <div class="empty-state" id="iou-empty" style="display:none">No one owes you anything right now.</div>
       </div>
@@ -240,6 +243,11 @@
       </div>
     </div>
     <div class="card">
+      <h3 class="section-title" style="margin-top:0">IOU people</h3>
+      <p style="font-size:13px;color:var(--muted)">People you've split expenses with are remembered here automatically, so you can tap to pick them next time instead of retyping (and avoid typos creating a duplicate person). Remove anyone you don't want suggested anymore.</p>
+      <div class="chip-list" id="iou-people-list"></div>
+    </div>
+    <div class="card">
       <h3 class="section-title" style="margin-top:0">Monthly budgets</h3>
       <label>Overall monthly budget (optional)</label>
       <input type="number" id="budget-overall" inputmode="decimal" step="0.01" placeholder="0.00">
@@ -362,6 +370,7 @@
         <label>Your share</label>
         <input type="text" id="split-your-share" class="is-default" inputmode="decimal" placeholder="0.00" autocomplete="off">
         <label style="margin-top:10px">Owed by</label>
+        <div id="iou-name-suggestions" class="name-chip-row" style="display:none"></div>
         <div id="split-owed-rows"></div>
         <button type="button" class="btn btn-secondary" id="split-add-person" style="width:100%;margin-top:8px">+ Add person</button>
         <p style="font-size:12px;color:var(--muted)" id="split-preview"></p>
@@ -391,6 +400,7 @@
     <textarea id="iou-settle-note" placeholder="e.g. Paid via Gcash"></textarea>
     <div class="btn-row">
       <button class="btn btn-secondary" id="iou-settle-cancel">Cancel</button>
+      <button class="btn btn-danger" id="iou-settle-delete" style="display:none">Delete</button>
       <button class="btn btn-primary" id="iou-settle-save">Save</button>
     </div>
   </div>

@@ -253,6 +253,23 @@ main { padding: 14px; max-width: 720px; margin: 0 auto; }
 .txn-amt.expense { color: var(--expense); }
 .txn-amt.income { color: var(--income); }
 .txn-item { cursor: pointer; }
+.drag-handle {
+  flex-shrink: 0;
+  padding: 4px 10px 4px 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+.txn-item.dragging {
+  position: relative;
+  z-index: 5;
+  background: var(--panel-soft);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  border-radius: var(--radius-sm);
+}
 
 .empty-state {
   text-align: center;
@@ -321,6 +338,10 @@ nav.bottom-nav .icon { width: 21px; height: 21px; }
 }
 .modal-overlay.active { display: flex; animation: overlayIn 0.2s ease; }
 @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+.modal-overlay.center-modal { align-items: center; justify-content: center; padding: 20px; }
+.modal-overlay.center-modal .modal { border-radius: 20px; border-bottom: 1px solid var(--border); max-width: 380px; width: 100%; max-height: 80vh; animation: modalPop 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+.modal-overlay.center-modal .modal::before { display: none; }
+@keyframes modalPop { from { transform: scale(0.92); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
 .modal {
   background: var(--panel);
   border-radius: 20px 20px 0 0;
@@ -369,6 +390,10 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmln
 .split-row .split-name { flex: 1.4; margin: 0; }
 .split-row .split-amount { flex: 1; margin: 0; }
 .is-default { color: var(--muted); }
+
+.name-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.name-chip { width: auto; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 12px; font-family: inherit; }
+.name-chip:active { background: var(--panel-soft); }
 .split-row .split-remove { flex: 0 0 auto; width: auto; padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); font-size: 14px; font-family: inherit; }
 
 .calc-row { display: flex; gap: 6px; margin-top: 8px; }
