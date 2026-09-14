@@ -236,6 +236,7 @@ main { padding: 14px; max-width: 720px; margin: 0 auto; }
 }
 .account-group-label:first-child { padding-top: 0; }
 .txn-item {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -253,9 +254,16 @@ main { padding: 14px; max-width: 720px; margin: 0 auto; }
 .txn-amt.expense { color: var(--expense); }
 .txn-amt.income { color: var(--income); }
 .txn-item { cursor: pointer; }
+/* Positioned out of the row's normal flow (into the card's own left padding) so its
+   presence never shifts the transaction text — rows look identical to before this feature
+   existed, whether or not a handle is present. */
 .drag-handle {
-  flex-shrink: 0;
-  padding: 4px 10px 4px 0;
+  position: absolute;
+  left: -16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  text-align: center;
   color: var(--muted);
   font-size: 16px;
   line-height: 1;

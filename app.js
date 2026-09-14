@@ -909,12 +909,16 @@ function renderTxnList(txns, listId, emptyId) {
   const sorted = [...txns].sort((a, b) => {
     if (txnSortMode === 'amount') return b.amount - a.amount;
     if (a.date !== b.date) return a.date < b.date ? 1 : -1;
-    // Same date: a manual drag-order wins if either side has one (undragged items sink to
-    // the bottom of the group); otherwise fall back to the original newest-logged-first order.
-    if (a.orderIndex != null || b.orderIndex != null) {
-      return (a.orderIndex ?? Infinity) - (b.orderIndex ?? Infinity);
-    }
-    return (b.createdAt || 0) - (a.createdAt || 0);
+    // Same date: any transaction without a manual drag-order always sorts by newest-logged-
+    // first (exactly like before this feature existed), and always appears ABOVE any
+    // manually-ordered ones in this date — so a freshly-logged transaction always lands at
+    // the top of its day, never gets stranded at the bottom just because some other
+    // transaction on that day was dragged at some point. Only the specific rows someone has
+    // actually dragged get pulled out of that "always newest first" flow, ordered amongst
+    // themselves by orderIndex.
+    const aKey = a.orderIndex != null ? 1e15 + a.orderIndex : -(a.createdAt || 0);
+    const bKey = b.orderIndex != null ? 1e15 + b.orderIndex : -(b.createdAt || 0);
+    return aKey - bKey;
   });
   list.innerHTML = sorted.map(txnRowHtml).join('');
   empty.style.display = sorted.length ? 'none' : 'block';
