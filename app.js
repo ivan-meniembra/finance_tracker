@@ -1018,15 +1018,23 @@ document.querySelectorAll('.nav-btn').forEach((b) => b.addEventListener('click',
 /* ---------- Hamburger menu (single tap straight to Settings) ---------- */
 document.getElementById('hamburger-btn').addEventListener('click', () => switchView('settings'));
 
-/* ---------- Swipe navigation: left = next tab, right = previous tab (Settings only from Home) ---------- */
+/* ---------- Swipe navigation ----------
+   Edge swipes (starting within EDGE_ZONE_PX of the left/right screen edge) switch tabs,
+   same as before. Swipes starting anywhere in the middle of the screen instead shift the
+   Home tab's date period (day/week/month/year, whichever is active) — the same effect as
+   tapping the ‹/› arrows — so the edges stay free for tab navigation while the rest of the
+   screen becomes a "flick through time" gesture. Middle swipes do nothing on other tabs or
+   while the IOU view is active (no period to shift there). */
 const SWIPE_NAV_ORDER = ['home', 'accounts', 'bills', 'audit', 'export'];
-let swipeStartX = 0, swipeStartY = 0, swipeStartTime = 0;
+const EDGE_ZONE_PX = 32;
+let swipeStartX = 0, swipeStartY = 0, swipeStartTime = 0, swipeStartedAtEdge = false;
 
 document.addEventListener('touchstart', (e) => {
   const t = e.touches[0];
   swipeStartX = t.clientX;
   swipeStartY = t.clientY;
   swipeStartTime = Date.now();
+  swipeStartedAtEdge = swipeStartX < EDGE_ZONE_PX || swipeStartX > window.innerWidth - EDGE_ZONE_PX;
 }, { passive: true });
 
 document.addEventListener('touchend', (e) => {
@@ -1037,6 +1045,14 @@ document.addEventListener('touchend', (e) => {
   const dt = Date.now() - swipeStartTime;
   if (dt > 600) return;
   if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+
+  if (!swipeStartedAtEdge) {
+    if (activeTabView === 'home' && homeMode === 'normal') {
+      currentAnchor = shiftAnchor(currentPeriodType, currentAnchor, dx < 0 ? 1 : -1);
+      renderHome();
+    }
+    return;
+  }
 
   if (dx < 0) {
     // swiped left -> move forward (or back out of Settings)
@@ -2440,9 +2456,10 @@ function renderBills() {
 
   list.innerHTML = sorted.map((b) => {
     const overdue = b.status === 'pending' && b.dueDate < today;
-    const dueSoon = b.status === 'pending' && !overdue && b.dueDate <= toDateStr(shiftAnchor('day', parseDate(today), 7));
-    const statusColor = b.status === 'paid' ? 'var(--income)' : overdue ? 'var(--expense)' : dueSoon ? '#fbbf24' : 'var(--muted)';
-    const statusLabel = b.status === 'paid' ? 'Paid' : overdue ? 'Overdue' : dueSoon ? 'Due soon' : 'Pending';
+    const dueToday = b.status === 'pending' && b.dueDate === today;
+    const dueSoon = b.status === 'pending' && !overdue && !dueToday && b.dueDate <= toDateStr(shiftAnchor('day', parseDate(today), 7));
+    const statusColor = b.status === 'paid' ? 'var(--income)' : overdue || dueToday ? 'var(--expense)' : dueSoon ? '#fbbf24' : 'var(--muted)';
+    const statusLabel = b.status === 'paid' ? 'Paid' : overdue ? 'Overdue' : dueToday ? 'Due today' : dueSoon ? 'Due soon' : 'Pending';
     return `<li class="txn-item" data-id="${b.id}">
       <div class="txn-main">
         <div class="txn-cat">${escapeHtml(b.name)}</div>
