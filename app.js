@@ -1346,19 +1346,28 @@ document.getElementById('period-picker-overlay').addEventListener('click', (e) =
 let editingId = null;
 let modalType = 'expense';
 
+// New transactions get a hidden placeholder as the default option — "hidden" means it never
+// appears as a choice in the opened dropdown list (only real categories/accounts show up),
+// but it's still a distinct underlying value, so picking ANY real option — even the one that
+// would otherwise have been the default — always fires a genuine 'change' event. That's what
+// makes the guided-entry chain in the Add Transaction modal reliable. Editing an existing
+// transaction always preselects its real value instead (no placeholder).
 function populateCategorySelect() {
   const sel = document.getElementById('txn-category');
-  sel.innerHTML = state.categories[modalType].map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  const options = state.categories[modalType].map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  sel.innerHTML = editingId ? options : `<option value="" selected hidden>Select category</option>${options}`;
 }
 function populateMethodSelect() {
   const sel = document.getElementById('txn-method');
-  sel.innerHTML = state.accounts.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+  const options = state.accounts.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+  sel.innerHTML = editingId ? options : `<option value="" selected hidden>Select account</option>${options}`;
 }
 
 function populateTransferSelects() {
-  const opts = state.accounts.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
-  document.getElementById('transfer-from').innerHTML = opts;
-  document.getElementById('transfer-to').innerHTML = opts;
+  const options = state.accounts.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+  const placeholder = '<option value="" selected hidden>Select account</option>';
+  document.getElementById('transfer-from').innerHTML = editingId ? options : placeholder + options;
+  document.getElementById('transfer-to').innerHTML = editingId ? options : placeholder + options;
 }
 
 function setModalType(type) {
@@ -1638,11 +1647,14 @@ function wireAutoAdvance(fromEl, onAdvance) {
   fromEl.addEventListener('focus', () => { advanced = false; });
 }
 
+// Date is intentionally left out of the chain — it already defaults to today, which is
+// right the vast majority of the time, so auto-popping its picker on every single
+// transaction would be more friction than it saves. It's still a normal field you can tap
+// any time (e.g. logging something from a previous day you missed).
 wireAutoAdvance(document.getElementById('txn-category'), () => tryOpenPicker(document.getElementById('txn-method')));
-wireAutoAdvance(document.getElementById('txn-method'), () => tryOpenPicker(document.getElementById('txn-date')));
+wireAutoAdvance(document.getElementById('txn-method'), () => document.getElementById('txn-note').focus());
 wireAutoAdvance(document.getElementById('transfer-from'), () => tryOpenPicker(document.getElementById('transfer-to')));
-wireAutoAdvance(document.getElementById('transfer-to'), () => tryOpenPicker(document.getElementById('txn-date')));
-wireAutoAdvance(document.getElementById('txn-date'), () => document.getElementById('txn-note').focus());
+wireAutoAdvance(document.getElementById('transfer-to'), () => document.getElementById('txn-note').focus());
 document.getElementById('installment-months').addEventListener('change', (e) => {
   document.getElementById('installment-months-custom').style.display = e.target.value === 'custom' ? 'block' : 'none';
   updateInstallmentPreview();
@@ -1748,6 +1760,7 @@ document.getElementById('txn-save').addEventListener('click', () => {
 
   const category = document.getElementById('txn-category').value;
   const method = document.getElementById('txn-method').value;
+  if (!category || !method) { toast('Pick a category and an account'); return; }
 
   if (editingId) {
     const t = state.transactions.find((x) => x.id === editingId);
