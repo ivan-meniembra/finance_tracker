@@ -402,6 +402,10 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmln
 .name-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .name-chip { width: auto; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 12px; font-family: inherit; }
 .name-chip:active { background: var(--panel-soft); }
+.name-chip.active { background: var(--accent-grad); color: #06111f; border-color: transparent; font-weight: 700; }
+.iou-bulk-row { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+.iou-bulk-row .iou-bulk-row-name { flex: 1.4; font-size: 14px; font-weight: 600; }
+.iou-bulk-row .split-amount { flex: 1; margin: 0; }
 .split-row .split-remove { flex: 0 0 auto; width: auto; padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); font-size: 14px; font-family: inherit; }
 
 .calc-row { display: flex; gap: 6px; margin-top: 8px; }

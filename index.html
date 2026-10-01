@@ -99,6 +99,7 @@
         <div class="summary-grid" style="grid-template-columns:1fr">
           <div class="stat"><div class="label">Total owed to you</div><div class="value income" id="iou-total">0</div></div>
         </div>
+        <button class="btn btn-secondary" id="btn-iou-bulk-settle" style="width:100%;margin-top:12px">💰 Receive a payment</button>
       </div>
       <div class="card">
         <h3 class="section-title" style="margin-top:0">Owed by person</h3>
@@ -311,7 +312,7 @@
       <button type="button" id="type-transfer">Transfer</button>
     </div>
     <label>Amount</label>
-    <input type="text" id="txn-amount" inputmode="decimal" placeholder="0.00" autocomplete="off">
+    <input type="text" id="txn-amount" inputmode="decimal" enterkeyhint="next" placeholder="0.00" autocomplete="off">
     <div class="calc-row" id="calc-row">
       <button type="button" data-op="+">+</button>
       <button type="button" data-op="-">−</button>
@@ -402,6 +403,34 @@
       <button class="btn btn-secondary" id="iou-settle-cancel">Cancel</button>
       <button class="btn btn-danger" id="iou-settle-delete" style="display:none">Delete</button>
       <button class="btn btn-primary" id="iou-settle-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- IOU BULK SETTLE MODAL (receive one lump payment covering several open IOUs) -->
+<div class="modal-overlay" id="iou-bulk-settle-modal-overlay">
+  <div class="modal">
+    <h2>Receive a payment</h2>
+    <label>From (tap to select — more than one if they paid together)</label>
+    <div id="iou-bulk-people-list" class="name-chip-row"></div>
+    <p style="font-size:13px;color:var(--muted)" id="iou-bulk-info"></p>
+    <label>Amount received</label>
+    <input type="text" id="iou-bulk-amount" inputmode="decimal" placeholder="0.00" autocomplete="off">
+    <p style="font-size:12px;color:var(--muted)">Oldest open IOUs are paid off first with this amount; anything left over stays open.</p>
+    <div id="iou-bulk-breakdown-wrap" style="display:none">
+      <label style="margin-top:10px">Split between them</label>
+      <div id="iou-bulk-breakdown"></div>
+      <p style="font-size:12px;color:var(--muted)" id="iou-bulk-breakdown-preview"></p>
+    </div>
+    <label>Deposited into</label>
+    <select id="iou-bulk-method"></select>
+    <label>Date</label>
+    <input type="date" id="iou-bulk-date">
+    <label>Note (optional)</label>
+    <textarea id="iou-bulk-note" placeholder="e.g. Paid via Gcash"></textarea>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="iou-bulk-cancel">Cancel</button>
+      <button class="btn btn-primary" id="iou-bulk-save">Save</button>
     </div>
   </div>
 </div>

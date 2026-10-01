@@ -592,6 +592,176 @@ document.getElementById('iou-settle-delete').addEventListener('click', () => {
   if (activeTabView === 'audit') renderAudit();
 });
 
+// Receive one lump payment covering several of a person's open IOUs at once — applies it
+// oldest-entry-first, fully closing out as many as it covers and leaving a partial balance
+// on whichever one it runs out on. Still creates one settlement transaction per entry
+// touched (not a single blob), so the per-transaction accounting stays consistent with
+// everything else and each entry's remaining-owed math keeps working unchanged.
+let iouBulkSelectedPeople = [];
+
+function openIouBulkSettleModal() {
+  const openPeople = [...new Set(allIouEntries().filter((e) => e.remaining > 0.004).map((e) => e.name))];
+  if (!openPeople.length) { toast('No one currently owes you anything'); return; }
+  iouBulkSelectedPeople = [iouActiveFilter && openPeople.includes(iouActiveFilter) ? iouActiveFilter : openPeople[0]];
+  renderIouBulkPeopleList(openPeople);
+  updateIouBulkInfo();
+  document.getElementById('iou-bulk-method').innerHTML = state.accounts.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+  document.getElementById('iou-bulk-date').value = todayStr();
+  document.getElementById('iou-bulk-note').value = '';
+  document.getElementById('iou-bulk-settle-modal-overlay').classList.add('active');
+}
+
+function renderIouBulkPeopleList(openPeople) {
+  const box = document.getElementById('iou-bulk-people-list');
+  box.innerHTML = openPeople.map((p) =>
+    `<button type="button" class="name-chip${iouBulkSelectedPeople.includes(p) ? ' active' : ''}" data-person="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join('');
+  box.querySelectorAll('.name-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const p = btn.dataset.person;
+      if (iouBulkSelectedPeople.includes(p)) {
+        if (iouBulkSelectedPeople.length === 1) return; // keep at least one person selected
+        iouBulkSelectedPeople = iouBulkSelectedPeople.filter((x) => x !== p);
+      } else {
+        iouBulkSelectedPeople.push(p);
+      }
+      btn.classList.toggle('active');
+      updateIouBulkInfo();
+    });
+  });
+}
+
+function iouOpenEntriesForPerson(person) {
+  return allIouEntries()
+    .filter((e) => e.remaining > 0.004 && e.name === person)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)); // oldest first
+}
+
+function updateIouBulkInfo() {
+  const people = iouBulkSelectedPeople;
+  const entries = people.flatMap((p) => iouOpenEntriesForPerson(p));
+  const total = entries.reduce((s, e) => s + e.remaining, 0);
+  document.getElementById('iou-bulk-info').textContent = people.length === 1
+    ? `${people[0]} owes ${fmtMoney(total)} across ${entries.length} item${entries.length === 1 ? '' : 's'}`
+    : `${people.join(', ')} owe ${fmtMoney(total)} combined across ${entries.length} items`;
+  document.getElementById('iou-bulk-amount').value = total;
+  renderIouBulkBreakdown();
+}
+
+// When 2+ people are selected, the single "amount received" becomes a combined lump sum
+// that needs splitting between them — defaults to an even split, but works just like the
+// "Owed by" rows in the split-expense form: editing one person's share only reshuffles the
+// OTHER untouched shares (not this one), so a partial manual guess doesn't fight the rest.
+function renderIouBulkBreakdown() {
+  const wrap = document.getElementById('iou-bulk-breakdown-wrap');
+  const container = document.getElementById('iou-bulk-breakdown');
+  if (iouBulkSelectedPeople.length < 2) { wrap.style.display = 'none'; container.innerHTML = ''; return; }
+  wrap.style.display = 'block';
+  const existing = [...container.querySelectorAll('.iou-bulk-row')].map((r) => r.dataset.person);
+  const sameSet = existing.length === iouBulkSelectedPeople.length && existing.every((n) => iouBulkSelectedPeople.includes(n));
+  if (!sameSet) {
+    container.innerHTML = iouBulkSelectedPeople.map((p) => `
+      <div class="iou-bulk-row" data-person="${escapeHtml(p)}">
+        <div class="iou-bulk-row-name">${escapeHtml(p)}</div>
+        <input type="text" class="split-amount is-default" inputmode="decimal" placeholder="Amount">
+      </div>`).join('');
+    container.querySelectorAll('.split-amount').forEach((inp) => {
+      const row = inp.closest('.iou-bulk-row');
+      inp.addEventListener('input', () => {
+        row.dataset.touched = '1';
+        inp.classList.remove('is-default');
+        rebalanceIouBulkBreakdown();
+      });
+      inp.addEventListener('blur', () => {
+        if (inp.value.trim() === '') {
+          row.dataset.touched = '';
+          inp.classList.add('is-default');
+          rebalanceIouBulkBreakdown();
+        }
+      });
+    });
+  }
+  rebalanceIouBulkBreakdown();
+}
+
+function rebalanceIouBulkBreakdown() {
+  const total = evalAmount(document.getElementById('iou-bulk-amount').value) || 0;
+  const rows = [...document.querySelectorAll('#iou-bulk-breakdown .iou-bulk-row')];
+  const touchedSum = rows.filter((r) => r.dataset.touched === '1')
+    .reduce((s, r) => s + (evalAmount(r.querySelector('.split-amount').value) || 0), 0);
+  const untouched = rows.filter((r) => r.dataset.touched !== '1');
+  const remaining = Math.max(0, Math.round((total - touchedSum) * 100) / 100);
+  const per = untouched.length ? remaining / untouched.length : 0;
+  untouched.forEach((r, i) => {
+    const isLast = i === untouched.length - 1;
+    const soFar = Math.round(per * i * 100) / 100;
+    const val = isLast ? Math.round((remaining - soFar) * 100) / 100 : Math.round(per * 100) / 100;
+    r.querySelector('.split-amount').value = val;
+  });
+  const sum = rows.reduce((s, r) => s + (evalAmount(r.querySelector('.split-amount').value) || 0), 0);
+  const diff = Math.round((total - sum) * 100) / 100;
+  const preview = document.getElementById('iou-bulk-breakdown-preview');
+  preview.textContent = Math.abs(diff) > 0.01
+    ? (diff > 0 ? `⚠ ${fmtMoney(diff)} unassigned` : `⚠ Over by ${fmtMoney(-diff)}`)
+    : '';
+  preview.style.color = 'var(--expense)';
+}
+
+document.getElementById('btn-iou-bulk-settle').addEventListener('click', openIouBulkSettleModal);
+document.getElementById('iou-bulk-amount').addEventListener('input', () => {
+  if (iouBulkSelectedPeople.length >= 2) rebalanceIouBulkBreakdown();
+});
+document.getElementById('iou-bulk-cancel').addEventListener('click', () => {
+  document.getElementById('iou-bulk-settle-modal-overlay').classList.remove('active');
+});
+document.getElementById('iou-bulk-settle-modal-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'iou-bulk-settle-modal-overlay') document.getElementById('iou-bulk-settle-modal-overlay').classList.remove('active');
+});
+document.getElementById('iou-bulk-save').addEventListener('click', () => {
+  const amount = Math.round((evalAmount(document.getElementById('iou-bulk-amount').value) || 0) * 100) / 100;
+  if (!amount || amount <= 0) { toast('Enter a valid amount'); return; }
+  const method = document.getElementById('iou-bulk-method').value;
+  const date = document.getElementById('iou-bulk-date').value || todayStr();
+  const note = document.getElementById('iou-bulk-note').value.trim();
+  const now = Date.now();
+
+  let allocations;
+  if (iouBulkSelectedPeople.length === 1) {
+    allocations = [{ person: iouBulkSelectedPeople[0], amount }];
+  } else {
+    allocations = [...document.querySelectorAll('#iou-bulk-breakdown .iou-bulk-row')].map((r) => ({
+      person: r.dataset.person,
+      amount: Math.round((evalAmount(r.querySelector('.split-amount').value) || 0) * 100) / 100,
+    })).filter((a) => a.amount > 0);
+    const allocSum = Math.round(allocations.reduce((s, a) => s + a.amount, 0) * 100) / 100;
+    if (Math.abs(allocSum - amount) > 0.01) { toast("The per-person split doesn't add up to the total received"); return; }
+  }
+
+  let totalTouched = 0, totalApplied = 0;
+  for (const { person, amount: personAmount } of allocations) {
+    let remainingPayment = personAmount;
+    const entries = iouOpenEntriesForPerson(person);
+    const totalOwed = entries.reduce((s, e) => s + e.remaining, 0);
+    if (remainingPayment > totalOwed) remainingPayment = totalOwed; // cap silently — final toast reflects what actually got applied
+    for (const e of entries) {
+      if (remainingPayment <= 0.004) break;
+      const applied = Math.round(Math.min(remainingPayment, e.remaining) * 100) / 100;
+      if (applied <= 0) continue;
+      state.transactions.push({
+        id: uid(), type: 'settlement', amount: applied, method, category: 'Repayment', date, note,
+        relatedTxnId: e.txnId, person, createdAt: now, updatedAt: now,
+      });
+      remainingPayment = Math.round((remainingPayment - applied) * 100) / 100;
+      totalTouched++;
+      totalApplied += applied;
+    }
+  }
+  saveData();
+  toast(`Marked ${fmtMoney(totalApplied)} as paid across ${totalTouched} item${totalTouched === 1 ? '' : 's'}`);
+  document.getElementById('iou-bulk-settle-modal-overlay').classList.remove('active');
+  renderHome();
+  if (activeTabView === 'audit') renderAudit();
+});
+
 function renderChart(byCat, total) {
   const svg = document.getElementById('chart-svg');
   const legend = document.getElementById('chart-legend');
@@ -1417,6 +1587,62 @@ document.getElementById('split-add-person').addEventListener('click', () => addS
 document.getElementById('txn-amount').addEventListener('input', () => {
   if (document.getElementById('txn-split').checked) { updateYourShareDefault(); rebalanceOwedRows(); }
 });
+
+// Chained "guided entry" flow for a brand-new transaction: finishing the amount opens the
+// Category picker; choosing a category opens the Account picker; choosing an account opens
+// the Date picker; picking a date focuses Note. Only active for new transactions (not when
+// editing an existing one, where cascading pickers popping open would just be annoying).
+// Uses the modern `showPicker()` API, which can actually force a native <select>/<input
+// type=date> picker open programmatically — plain `.focus()` cannot do this on iOS. Support
+// depends on iOS/Safari version (added in Safari 17.4); where it's unavailable we fall back
+// to focusing the field so it's at least scrolled into view and highlighted, ready for a tap.
+function tryOpenPicker(el) {
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (typeof el.showPicker === 'function') {
+    try { el.showPicker(); return; } catch (err) { /* fall through to focus below */ }
+  }
+  el.focus();
+}
+
+function focusAmountNextField() {
+  document.getElementById('txn-amount').blur();
+  const target = modalType === 'transfer'
+    ? document.getElementById('transfer-from')
+    : document.getElementById('txn-category');
+  tryOpenPicker(target);
+}
+document.getElementById('txn-amount').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === 'Go' || e.key === 'Next') {
+    e.preventDefault();
+    focusAmountNextField();
+  }
+});
+
+// A `<select>`/`<input type=date>` only fires 'change' when the value actually changes —
+// confirming an already-selected default (the first category, the first account, today's
+// date that's pre-filled) changes nothing, so no 'change' event ever comes and the chain
+// would silently stop there. Fixed by also advancing on 'blur' (the field losing focus,
+// which happens every time its picker closes, value-changed or not), with a per-field flag
+// so a 'change' immediately followed by its own 'blur' doesn't advance twice — and the flag
+// resets whenever the field is re-focused, so returning to fix an earlier field still
+// re-triggers the chain correctly afterward.
+function wireAutoAdvance(fromEl, onAdvance) {
+  let advanced = false;
+  const advance = () => {
+    if (advanced || editingId) return;
+    advanced = true;
+    onAdvance();
+  };
+  fromEl.addEventListener('change', advance);
+  fromEl.addEventListener('blur', () => setTimeout(advance, 30));
+  fromEl.addEventListener('focus', () => { advanced = false; });
+}
+
+wireAutoAdvance(document.getElementById('txn-category'), () => tryOpenPicker(document.getElementById('txn-method')));
+wireAutoAdvance(document.getElementById('txn-method'), () => tryOpenPicker(document.getElementById('txn-date')));
+wireAutoAdvance(document.getElementById('transfer-from'), () => tryOpenPicker(document.getElementById('transfer-to')));
+wireAutoAdvance(document.getElementById('transfer-to'), () => tryOpenPicker(document.getElementById('txn-date')));
+wireAutoAdvance(document.getElementById('txn-date'), () => document.getElementById('txn-note').focus());
 document.getElementById('installment-months').addEventListener('change', (e) => {
   document.getElementById('installment-months-custom').style.display = e.target.value === 'custom' ? 'block' : 'none';
   updateInstallmentPreview();
